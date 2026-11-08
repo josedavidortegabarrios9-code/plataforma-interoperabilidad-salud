@@ -3,214 +3,329 @@
 [![FHIR R4](https://img.shields.io/badge/HL7-FHIR%20R4-blue.svg)](https://hl7.org/fhir/R4/)
 [![FastAPI](https://img.shields.io/badge/HSB-FastAPI%20REST-green.svg)](https://fastapi.tiangolo.com/)
 [![Docker Compose](https://img.shields.io/badge/Docker-Compose%20v2-2496ED.svg)](https://www.docker.com/)
+[![Security](https://img.shields.io/badge/Auth-JWT%20%2B%202FA-blueviolet.svg)]()
 [![Integrity](https://img.shields.io/badge/Audit-SHA--256%20Chain-orange.svg)]()
 [![Status](https://img.shields.io/badge/Release-v1.0-brightgreen.svg)]()
 
-**Asignatura:** Sistemas Distribuidos  
-**Institución:** Universidad Antonio José de Sucre (UAJS)  
-**Docente:** Ing. Jaider Reyes Herazo  
-**Equipo de Estudiantes:**  
+Plataforma de interoperabilidad clínica para una red de Instituciones Prestadoras de Salud (IPS) distribuida en tres sedes regionales. Integra sistemas legados heterogéneos mediante un **Health Service Bus (HSB)**, normalización al estándar internacional **HL7 FHIR R4**, persistencia distribuida federada con transacciones **ACID**, autenticación con **Segundo Factor (2FA)**, control de acceso basado en roles (**RBAC**), tolerancia a fallos y auditoría criptográfica encadenada por **SHA-256**.
+
+**Desarrolladores:**  
 - **Jose Ortega Barrios**  
 - **Raul Peralta Perez**  
-**Versión de Entrega:** `v1.0` (Aprobada con todos los criterios RF1 a RF6 y RNF)
 
 ---
 
-## 🏥 1. Descripción del Escenario
+## 🏥 1. Arquitectura de la Solución
 
-Plataforma distribuida de interoperabilidad clínica para una red de Instituciones Prestadoras de Salud (IPS) distribuida en tres sedes regionales:
-- **Sede 1 — Sincelejo:** Laboratorio clínico ambulatorio (emite mensajería estándar HL7 v2 `ORU^R01` con códigos LOINC).
-- **Sede 2 — Cartagena:** Urgencias y hospitalización médica (emite mensajería HL7 v2 `ADT^A01` con codificación CIE-10).
-- **Sede 3 — Corozal:** Consulta externa comunitaria (emite archivos planos legados delimitados por punto y coma `CSV`).
+La red asistencial opera de forma distribuida en tres sedes con sistemas independientes:
 
-La plataforma integra los sistemas legados sin reemplazarlos mediante un **Health Service Bus (HSB)**, normalización al estándar internacional **HL7 FHIR R4**, persistencia distribuida federada con transacciones **ACID**, auditoría criptográfica encadenada por **SHA-256** y un **Frontend con 4 Vistas por Rol**.
-
----
-
-## 📁 2. Estructura del Repositorio
-
-El proyecto cumple la estructura exigida en la guía oficial del parcial:
+- **Sede 1 — Sincelejo:** Laboratorio clínico especializado (mensajería estándar HL7 v2 `ORU^R01` con codificación LOINC).
+- **Sede 2 — Cartagena:** Urgencias y hospitalización (mensajería estándar HL7 v2 `ADT^A01` con codificación diagnóstica CIE-10).
+- **Sede 3 — Corozal:** Consulta externa comunitaria (archivos planos legados estructurados en `CSV`).
 
 ```
-plataforma-interoperabilidad-salud/
-├── app/                  # Recursos y componentes del frontend web
-├── db/                   # Esquemas SQL, catálogos e inicialización de los 3 nodos PostgreSQL
-│   ├── init_schema.sql   # Esquema clínico relacional
-│   ├── catalogs.sql      # Catálogos oficiales y mapeos terminológicos
-│   ├── seed_sede1.sql    # Datos sintéticos Sede 1 (Sincelejo)
-│   ├── seed_sede2.sql    # Datos sintéticos Sede 2 (Cartagena)
-│   └── seed_sede3.sql    # Datos sintéticos Sede 3 (Corozal)
-├── docs/                 # Informes técnicos formales según la Plantilla v7
-│   ├── fase1_informe_arquitectura_uml.md    # Resumen, UML y Arquitectura
-│   ├── fase2_datos_distribuidos_fhir.md    # Estado del arte (APA 7), CAP y ACID
-│   ├── fase3_hsb_middleware.md             # Ingesta, Idempotencia y DLQ
-│   ├── fase4_seguridad_resiliencia.md      # RBAC, Auditoría SHA-256 y Caída
-│   └── fase5_informe_final_sustentacion.md # Prototipo y Guion de 15 min
-├── fhir/                 # Normalizador y especificación HL7 FHIR R4
-│   └── normalizer.py     # Transforma datos a Bundles Transaction PUT deterministas
-├── hsb/                  # Health Service Bus (Middleware central en FastAPI)
-│   ├── main.py           # API REST, orquestador, 4 vistas web y observabilidad
-│   ├── parser.py         # Parser y validador de HL7 v2 y CSV según LEEME.md
-│   ├── audit.py          # Ledger de auditoría con cadena de hashes SHA-256
-│   ├── Dockerfile        # Contenedor del HSB
-│   └── requirements.txt  # Dependencias Python
-├── infra/                # Configuraciones adicionales de infraestructura
-├── tests/                # Suites de prueba automatizadas y fixtures oficiales
-│   ├── 01_adt_a01_valido_sede2.hl7         # Contrato HL7 válido Sede 2
-│   ├── 02_oru_r01_laboratorio_sede1.hl7     # Contrato HL7 laboratorio Sede 1
-│   ├── 03_adt_a01_invalido.hl7              # Contrato HL7 inválido (3 motivos)
-│   ├── 04_sede3_legado.csv                  # Contrato CSV (3 válidos, 2 rechazados)
-│   ├── test_normalizer.py                  # Pruebas unitarias FHIR R4 (6 tests)
-│   ├── test_parser_contracts.py            # Pruebas de contratos LEEME.md (4 tests)
-│   └── test_hsb_integration.py             # Pruebas extremo a extremo (10 tests)
-└── docker-compose.yml    # Orquestación de toda la plataforma
+                              ┌─────────────────────────────────────────┐
+                              │           Frontend Web (SPA)            │
+                              │ (Médico / Admisión / Auditor / Paciente)│
+                              └────────────────────┬────────────────────┘
+                                                   │ HTTP / JWT + 2FA
+                                                   ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                             Health Service Bus (HSB Middleware)                                  │
+│  ├── Ingesta Multiformato (HL7 v2, CSV, JSON REST)                                               │
+│  ├── Validador Sintáctico y Semántico (Catálogos CIE-10, LOINC, Sexo, Tipo Doc)                   │
+│  ├── Motor de Idempotencia Criptográfica (SHA-256 + MSH-10)                                      │
+│  ├── Normalizador a Recursos FHIR R4 (Patient, Encounter, Condition, Observation)                │
+│  ├── Control de Acceso RBAC (Tokens JWT HMAC-SHA256 con Mínimo Privilegio)                       │
+│  ├── Auditoría Inmutable Encadenada (Hash Chaining SHA-256 Tamper-Evident)                       │
+│  └── Colas de Reintento y Dead Letter Queue (DLQ) ante Caídas                                    │
+└───────┬───────────────────────────────┬──────────────────────────────┬───────────────────────────┘
+        │                               │                              │                           │
+        ▼                               ▼                              ▼                           ▼
+┌──────────────┐                ┌──────────────┐               ┌──────────────┐            ┌──────────────┐
+│   pg_sede1   │                │   pg_sede2   │               │   pg_sede3   │            │  hapi_fhir   │
+│ (Sincelejo)  │                │ (Cartagena)  │               │  (Corozal)   │            │ (Servidor R4)│
+│ Puerto: 5431 │                │ Puerto: 5432 │               │ Puerto: 5433 │            │ Puerto: 8090 │
+└──────────────┘                └──────────────┘               └──────────────┘            └──────────────┘
 ```
 
 ---
 
-## ⚡ 3. Guía de Arranque Rápido
+## ⚡ 2. Guía de Despliegue Rápido (Paso a Paso)
 
 ### Requisitos Previos
-- **Docker** y **Docker Compose** instalados (o Docker Desktop activo en Windows / Linux).
-- **Git** para clonar el repositorio.
+- **Docker** y **Docker Compose** instalados y en ejecución.
+- **Git** instalado.
 
 ---
 
-### Opción A: Despliegue Oficial en Contenedores (Un Solo Comando)
-
-1. **Clonar el repositorio:**
-   ```bash
-   git clone https://github.com/josedavidortegabarrios9-code/plataforma-interoperabilidad-salud.git
-   cd plataforma-interoperabilidad-salud
-   ```
-
-2. **Levantar todo el clúster:**
-   ```bash
-   docker compose up --build -d
-   ```
-
-3. **Verificar el estado de los contenedores:**
-   ```bash
-   docker compose ps
-   ```
-   *Todos los servicios (`pg_sede1`, `pg_sede2`, `pg_sede3`, `hapi_fhir`, `hsb_service`) deben figurar en estado `Up` / `healthy`.*
-
-4. **Abrir la plataforma web:**  
-   Accede desde tu navegador a: 👉 **`http://localhost:8000/`**
-
----
-
-### Opción B: Ejecución Local en Python (Sin Docker)
-
-Si deseas probar la lógica y el frontend directamente en tu máquina:
-
+### Paso 1: Clonar el Repositorio
 ```bash
-# 1. Instalar dependencias
-pip install -r hsb/requirements.txt
-
-# 2. Ejecutar el HSB y las 4 Vistas
-python hsb/main.py
+git clone https://github.com/josedavidortegabarrios9-code/plataforma-interoperabilidad-salud.git
+cd plataforma-interoperabilidad-salud
 ```
-Abre en el navegador: 👉 **`http://localhost:8000/`**
+
+### Paso 2: Levantar el Clúster de Servicios
+```bash
+docker compose up --build -d
+```
+*Este comando descarga las imágenes oficiales, compila el contenedor del middleware HSB, inicializa las bases de datos de las 3 sedes y arranca el servidor HAPI FHIR R4.*
+
+### Paso 3: Verificar que Todos los Nodos Están Saludables
+```bash
+docker compose ps
+```
+Todos los contenedores deben mostrar estado `Up` / `healthy`:
+- `pg_sede1` (Sincelejo - Puerto 5431)
+- `pg_sede2` (Cartagena - Puerto 5432)
+- `pg_sede3` (Corozal - Puerto 5433)
+- `hapi_fhir` (Servidor FHIR R4 - Puerto 8090)
+- `hsb_service` (Middleware HSB + UI - Puerto 8000)
+
+### Paso 4: Probar el Diagnóstico de Salud de la API
+```bash
+curl http://localhost:8000/health
+```
+Respuesta esperada:
+```json
+{
+  "status": "healthy",
+  "componentes": {
+    "hsb_service": "UP",
+    "nodo_sede1_sincelejo": "UP",
+    "nodo_sede2_cartagena": "UP",
+    "nodo_sede3_corozal": "UP",
+    "hapi_fhir_server": "UP"
+  }
+}
+```
+
+### Paso 5: Abrir la Plataforma Web
+Abre tu navegador web e ingresa a:  
+👉 **`http://localhost:8000/`**
 
 ---
 
-## 👥 4. Usuarios de Prueba y Roles de Acceso (RBAC)
+## 🔐 3. Autenticación y Control de Acceso (JWT + 2FA)
 
-El frontend dispone de un selector dinámico en la barra superior para cambiar de rol y comprobar los permisos:
+La plataforma utiliza autenticación multifactor obligatoria en dos etapas:
 
-| Rol | Identidad | Permisos Permitidos | Restricción Estricta (HTTP 403) |
-| :--- | :--- | :--- | :--- |
-| **Médico** | `medico_ruiz` | Consulta unificada completa de las 3 sedes, registrar diagnósticos CIE-10 y egresos. | Alterar eventos de auditoría. |
-| **Paciente** | `paciente1001` | Ver su propia historia unificada, descargar Bundle FHIR R4 y ver auditoría de accesos. | Modificar historias o ver otros pacientes. |
-| **Admisionista** | `admision_sincelejo` | Buscar pacientes, detectar duplicados inter-sedes y abrir atenciones con nivel de triage. | **Ver diagnósticos clínicos o notas médicas.** |
-| **Auditor** | `auditor_calidad` | Reporte de cobertura, métricas de rendimiento, tablero de nodos y verificador de integridad. | Editar contenido asistencial. |
+1. **Paso 1 — Credenciales:** Se ingresa usuario y contraseña.
+2. **Paso 2 — Verificación de Segundo Factor (2FA):** El sistema emite un código criptográfico de 6 dígitos al correo institucional antes de generar el token JWT firmado con HMAC-SHA256.
+
+### Credenciales de Acceso por Rol
+
+| Rol | Usuario | Contraseña | Código 2FA | Vista Asignada | Permisos Asistenciales |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Médico** | `medico_ruiz` | `medico123` | `807286` | Clínica Central | Consulta de historias de las 3 sedes y registro de diagnósticos CIE-10. |
+| **Admisión** | `admision_sincelejo` | `admision123` | `807286` | Formulario Admisión | Admisión asistencial y asignación de triage. **Bloqueo a notas clínicas**. |
+| **Auditor** | `auditor_calidad` | `auditor123` | `807286` | Estado Nodos & Auditoría | Métricas del bus, conmutador de caídas y verificador SHA-256. |
+| **Paciente** | `paciente1001` | `paciente123` | `807286` | Portal Paciente | Resumen de sus atenciones y descarga de su Bundle FHIR R4. |
 
 ---
 
-## 🧪 5. Comandos de Prueba para Sustentación en Vivo (`curl`)
+## 🖥️ 4. Guía de Operación en la Interfaz Web
 
-El docente puede verificar el cumplimiento de los contratos en tiempo real ejecutando estos comandos:
+### A. Vista Admisionista (Admisión y Triage)
+- Inicia sesión como `admision_sincelejo`.
+- Se abre el **Formulario de Admisión de Paciente** estructurado en secciones:
+  1. *Información del Paciente:* Documento (PID), Nombres, Apellidos, Fecha de Nacimiento y Género.
+  2. *Información de Contacto:* Teléfono, Dirección y Correo electrónico.
+  3. *Contacto de Emergencia:* Nombre del familiar, Teléfono y Parentesco.
+  4. *Fecha de Admisión y Aseguradora:* Sede (Sincelejo, Cartagena, Corozal), Nivel de Triage (1 al 5) y EPS.
+  5. *Información del Médico:* Profesional asignado y servicio.
+- Al presionar **Enviar Formulario**, el HSB genera los recursos `Patient` y `Encounter` normalizados a FHIR R4.
 
-### 1. Ingesta de mensaje válido HL7 v2 (Sede 2 - Cartagena)
+### B. Vista Médico (Registro Clínico e Historia Unificada)
+- Inicia sesión como `medico_ruiz`.
+- En el panel de **Clínica Central**:
+  - **`+ Crear historial medico`**: Permite ingresar diagnósticos CIE-10 (`J45.9`, `I10`, `E11.9`, etc.) y tecnologías en salud conectadas al HSB.
+  - **`🔍 Consultar historial medico`**: Ingresa la cédula `1001` y presiona **Consultar**. Se desplegará la **Historia Clínica Unificada** con las atenciones combinadas de las 3 sedes (Sincelejo, Cartagena y Corozal) en una sola línea de tiempo.
+
+### C. Vista Auditor (Métricas, Resiliencia y Auditoría SHA-256)
+- Inicia sesión como `auditor_calidad`.
+- **Métricas en tiempo real:** Muestra el total de mensajes procesados, entregados exitosos, duplicados detectados y tasa de fallos.
+- **Tolerancia a fallos:** Haz clic en **Conmutar Caída** en la Sede 2 (Cartagena). La sede pasará a inactiva, pero la consulta de historias clínicas seguirá respondiendo en modo degradado resiliente con las demás sedes operativas.
+- **Detector de alteraciones SHA-256:**
+  - Presiona **Simular Alteración Maliciosa** (modifica un registro en la base de datos).
+  - Presiona **Re-verificar**. El sistema alertará de inmediato que la integridad criptográfica fue quebrada.
+
+### D. Vista Paciente (Descarga de Historia FHIR R4)
+- Inicia sesión como `paciente1001`.
+- Consulta su resumen personal de atenciones y permite hacer clic en **Descargar mi Historia en FHIR R4 (JSON)** para obtener el Bundle interoperable oficial.
+
+---
+
+## 📡 5. Pruebas de Integración y Comandos de Terminal (`curl`)
+
+Puedes probar todos los flujos de backend ejecutando estos comandos desde cualquier terminal:
+
+### 1. Ingesta de Mensaje HL7 v2 ADT^A01 (Sede 2 - Cartagena)
 ```bash
 curl -X POST http://localhost:8000/hsb/hl7 \
   -H "Content-Type: text/plain" \
   --data-binary @tests/01_adt_a01_valido_sede2.hl7
 ```
-*Resultado:* `estado: entregado`, Patient 1007, Encounter y Condition J45.9 en Sede 2. Cobertura FHIR sube a 100%.
+*Salida esperada:*
+```json
+{
+  "estado": "entregado",
+  "id_mensaje": "MSG-001",
+  "documento": "1007",
+  "sede": 2,
+  "fhir_patient_id": "pac-1007"
+}
+```
 
-### 2. Demostración de Idempotencia (Reenvío idéntico)
+### 2. Prueba de Idempotencia (Reenvío del Mismo Mensaje)
 ```bash
 curl -X POST http://localhost:8000/hsb/hl7 \
   -H "Content-Type: text/plain" \
   --data-binary @tests/01_adt_a01_valido_sede2.hl7
 ```
-*Resultado:* `estado: duplicado`. Gracias al hash SHA-256 y `MSH-10`, **no se crea ningún registro duplicado**.
+*Salida esperada:*
+```json
+{
+  "estado": "duplicado",
+  "id_mensaje": "MSG-001",
+  "mensaje": "Mensaje MSG-001 ya fue procesado previamente. No se crean duplicados."
+}
+```
 
-### 3. Ingesta de mensaje inválido (Rechazado con 3 motivos exactos)
+### 3. Ingesta de Mensaje HL7 v2 ORU^R01 (Laboratorio Sede 1 - Sincelejo)
+```bash
+curl -X POST http://localhost:8000/hsb/hl7 \
+  -H "Content-Type: text/plain" \
+  --data-binary @tests/02_oru_r01_laboratorio_sede1.hl7
+```
+*Salida esperada:* `estado: entregado` con observación LOINC `718-7` (Hemoglobina: 13.8 g/dL).
+
+### 4. Rechazo de Mensaje HL7 Inválido (Validación Sintáctica)
 ```bash
 curl -X POST http://localhost:8000/hsb/hl7 \
   -H "Content-Type: text/plain" \
   --data-binary @tests/03_adt_a01_invalido.hl7
 ```
-*Resultado:* Código HTTP 422 con motivos: `documento no numérico`, `sexo no válido`, `diagnóstico sin mapeo a CIE-10`.
+*Salida esperada:* Código `HTTP 422 Unprocessable Entity`:
+```json
+{
+  "estado": "rechazado",
+  "motivos": [
+    "documento no numérico",
+    "sexo no válido",
+    "diagnóstico sin mapeo a CIE-10"
+  ]
+}
+```
 
-### 4. Ingesta de CSV legado (Sede 3 - Corozal)
+### 5. Ingesta por Lotes de Archivo CSV Legado (Sede 3 - Corozal)
 ```bash
 curl -X POST "http://localhost:8000/hsb/csv?sede=3" \
   -H "Content-Type: text/plain" \
   --data-binary @tests/04_sede3_legado.csv
 ```
-*Resultado:* 3 entregados (1008, 1009, 1010) y 2 rechazados (1011 sin mapeo y 12 con doc de 2 dígitos).
-
-### 5. Verificación de Integridad Criptográfica (Tamper Detection)
-```bash
-curl -s http://localhost:8000/audit/verify
-```
-*Resultado:* `integro: true`, 0 alteraciones detectadas en los hashes SHA-256.
-
-### 6. Prueba de Resiliencia ante Caída de Sede (Tolerancia a Fallos Parciales)
-```bash
-# Simular caída de Sede 2 (Cartagena)
-curl -X POST "http://localhost:8000/test/toggle-sede?sede_id=2"
-
-# Consultar paciente 1001 (responde con sedes activas 1 y 3 sin dar error 500)
-curl -s "http://localhost:8000/paciente/1001/historia-unificada" -H "X-Rol: medico"
+*Salida esperada:*
+```json
+{
+  "total_lineas": 5,
+  "entregados": 3,
+  "rechazados": 2
+}
 ```
 
 ---
 
-## 🚦 6. Ejecución de la Batería Completa de Pruebas Automatizadas
+## 🛡️ 6. Pruebas de Seguridad y Control de Acceso (RBAC)
 
-Para validar las **16 pruebas unitarias y de integración** automáticas:
+### Rechazo de Acceso No Autorizado (HTTP 403 Forbidden)
 
+1. Obtener token de la admisionista:
 ```bash
-# 1. Pruebas de Contratos de LEEME.md (4 tests)
-python tests/test_parser_contracts.py
-
-# 2. Pruebas del Normalizador FHIR R4 (6 tests)
-python tests/test_normalizer.py
-
-# 3. Pruebas de Integración Extremo a Extremo (10 tests)
-python tests/test_hsb_integration.py
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admision_sincelejo","password":"admision123"}' \
+  | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
 ```
 
-*Salida esperada:* `Ran 10 tests in 0.15s - OK`.
+2. Intentar consultar historia clínica médica con ese token:
+```bash
+curl -i http://localhost:8000/paciente/1001/historia-unificada \
+  -H "Authorization: Bearer $TOKEN"
+```
+*Respuesta:*
+```text
+HTTP/1.1 403 Forbidden
+{"detail": "Acceso denegado (HTTP 403 Forbidden): El personal de Admisión y Triage NO está autorizado para consultar notas ni diagnósticos clínicos."}
+```
 
 ---
 
-## 📚 7. Documentación Formal de Entrega (Plantilla v7)
+## 🔍 7. Verificación de Auditoría Criptográfica (SHA-256)
 
-- [Fase 1: Análisis, Modelado UML y Arquitectura](docs/fase1_informe_arquitectura_uml.md)
-- [Fase 2: Datos Distribuidos y FHIR R4](docs/fase2_datos_distribuidos_fhir.md)
-- [Fase 3: HSB y Middleware de Integración](docs/fase3_hsb_middleware.md)
-- [Fase 4: Seguridad, Auditoría Criptográfica y Resiliencia](docs/fase4_seguridad_resiliencia.md)
-- [Fase 5: Prototipo Final y Guion Oficial de Sustentación](docs/fase5_informe_final_sustentacion.md)
+1. **Verificar cadena íntegra:**
+```bash
+curl http://localhost:8000/audit/verify
+```
+*Resultado:* `{"integro": true, "mensaje": "Integridad criptográfica verificada: 0 alteraciones detectadas"}`
+
+2. **Simular alteración de registro:**
+```bash
+curl -X POST "http://localhost:8000/audit/tamper?evento_id=1"
+```
+
+3. **Comprobar detección:**
+```bash
+curl http://localhost:8000/audit/verify
+```
+*Resultado:* `{"integro": false, "evento_alterado_id": 1, "motivo": "El hash SHA-256 del registro no coincide con el contenido de la fila"}`
 
 ---
 
-## 🏷️ 8. Etiquetas de Versión (Releases)
-- `v0.1-fase1`: Entrega formal de la Fase 1.
-- `v0.2-fase2`: Entrega formal de la Fase 2.
-- `v1.0`: **Versión de entrega final de la plataforma completa y sustentación.**
+## 🧪 8. Ejecución de la Suite de Pruebas Automatizadas
+
+La plataforma incluye 20 pruebas automáticas unitarias y de integración:
+
+```bash
+python3 -m unittest discover tests
+```
+
+*Salida esperada:*
+```text
+....................
+----------------------------------------------------------------------
+Ran 20 tests in 0.18s
+
+OK
+```
+
+---
+
+## 📁 9. Estructura del Proyecto
+
+```
+plataforma-interoperabilidad-salud/
+├── db/                   # Esquemas SQL, catálogos y datos sintéticos de las 3 sedes
+│   ├── init_schema.sql   # Esquema relacional asistencial
+│   ├── catalogs.sql      # Catálogos oficiales (CIE-10, LOINC, Sexo, Tipo Doc)
+│   ├── seed_sede1.sql    # Datos Sede 1 (Sincelejo)
+│   ├── seed_sede2.sql    # Datos Sede 2 (Cartagena)
+│   └── seed_sede3.sql    # Datos Sede 3 (Corozal)
+├── docs/                 # Documentación técnica y especificaciones de diseño
+├── fhir/                 # Especificación de recursos y normalizador HL7 FHIR R4
+│   └── normalizer.py     # Construcción de Bundles Transaction deterministas
+├── hsb/                  # Health Service Bus (Middleware en FastAPI)
+│   ├── main.py           # API REST, router de sedes, interfaz web y observabilidad
+│   ├── parser.py         # Parsers HL7 v2 y CSV con validación de contratos
+│   ├── auth.py           # Gestión de JWT HMAC-SHA256 y matriz RBAC
+│   ├── audit.py          # Ledger de auditoría con encadenamiento SHA-256
+│   └── Dockerfile        # Definición del contenedor del HSB
+├── tests/                # Fixtures oficiales de prueba y suites de testing
+│   ├── 01_adt_a01_valido_sede2.hl7
+│   ├── 02_oru_r01_laboratorio_sede1.hl7
+│   ├── 03_adt_a01_invalido.hl7
+│   ├── 04_sede3_legado.csv
+│   ├── test_normalizer.py
+│   ├── test_parser_contracts.py
+│   └── test_hsb_integration.py
+└── docker-compose.yml    # Orquestación multicontenedor de la red distribuida
+```
