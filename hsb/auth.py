@@ -14,37 +14,44 @@ from fastapi import HTTPException, Header
 
 JWT_SECRET = os.getenv("JWT_SECRET", "super_secret_clinical_interoperability_key_2026")
 
-# Base de Usuarios de Prueba (según README oficial del parcial)
+# Base de Usuarios de Prueba con correos y soporte 2FA
 USUARIOS_PRUEBA = {
     "medico_ruiz": {
         "password": "medico123",
         "rol": "medico",
         "nombre": "Dr. Mateo Ruiz",
         "sede": 2,
-        "documento": "502002"
+        "documento": "502002",
+        "email": "mateo.ruiz@ips-salud.gov.co"
     },
     "paciente1001": {
         "password": "paciente123",
         "rol": "paciente",
         "nombre": "Carlos Perez",
         "sede": 1,
-        "documento": "1001"
+        "documento": "1001",
+        "email": "carlos.perez1001@correo.com"
     },
     "admision_sincelejo": {
         "password": "admision123",
         "rol": "admisionista",
         "nombre": "Lic. Clara Martinez",
         "sede": 1,
-        "documento": "601001"
+        "documento": "601001",
+        "email": "clara.martinez@sincelejo-salud.gov.co"
     },
     "auditor_calidad": {
         "password": "auditor123",
         "rol": "auditor",
         "nombre": "Auditor Regional Sucre",
         "sede": 1,
-        "documento": "701001"
+        "documento": "701001",
+        "email": "auditoria.regional@sucre.gov.co"
     }
 }
+
+# Almacén de códigos 2FA temporales (Username -> {"code": "807286", "expires": timestamp})
+ACTIVE_2FA_CODES: Dict[str, Dict[str, Any]] = {}
 
 # Matriz de Permisos Estrictos por Rol (Fase 4 de la Guía)
 PERMISOS_ROL = {
