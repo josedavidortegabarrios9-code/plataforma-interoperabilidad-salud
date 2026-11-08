@@ -1,6 +1,4 @@
 -- Seed Sede 3 (Corozal)
-\i /docker-entrypoint-initdb.d/init_schema.sql
-\i /docker-entrypoint-initdb.d/catalogs.sql
 
 INSERT INTO profesional_salud (id_profesional, cod_tipo_documento, numero_documento, nombre_completo, registro_medico, id_sede) VALUES
 (3, 'CC', '503003', 'Dra. Andrea Soler', 'RM-7021', 3)

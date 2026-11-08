@@ -1,6 +1,4 @@
 -- Seed Sede 2 (Cartagena)
-\i /docker-entrypoint-initdb.d/init_schema.sql
-\i /docker-entrypoint-initdb.d/catalogs.sql
 
 INSERT INTO profesional_salud (id_profesional, cod_tipo_documento, numero_documento, nombre_completo, registro_medico, id_sede) VALUES
 (2, 'CC', '502002', 'Dr. Mateo Ruiz', 'RM-1301', 2)

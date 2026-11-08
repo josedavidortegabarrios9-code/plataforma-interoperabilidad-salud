@@ -13,9 +13,9 @@ services:
       - "5431:5432"
     volumes:
       - sede1_data:/var/lib/postgresql/data
-      - ./db/init_schema.sql:/docker-entrypoint-initdb.d/init_schema.sql
-      - ./db/catalogs.sql:/docker-entrypoint-initdb.d/catalogs.sql
-      - ./db/seed_sede1.sql:/docker-entrypoint-initdb.d/seed_sede1.sql
+      - ./db/init_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - ./db/catalogs.sql:/docker-entrypoint-initdb.d/02_catalogs.sql
+      - ./db/seed_sede1.sql:/docker-entrypoint-initdb.d/03_seed.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d historia_clinica_sede1"]
       interval: 5s
@@ -36,9 +36,9 @@ services:
       - "5432:5432"
     volumes:
       - sede2_data:/var/lib/postgresql/data
-      - ./db/init_schema.sql:/docker-entrypoint-initdb.d/init_schema.sql
-      - ./db/catalogs.sql:/docker-entrypoint-initdb.d/catalogs.sql
-      - ./db/seed_sede2.sql:/docker-entrypoint-initdb.d/seed_sede2.sql
+      - ./db/init_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - ./db/catalogs.sql:/docker-entrypoint-initdb.d/02_catalogs.sql
+      - ./db/seed_sede2.sql:/docker-entrypoint-initdb.d/03_seed.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d historia_clinica_sede2"]
       interval: 5s
@@ -59,9 +59,9 @@ services:
       - "5433:5432"
     volumes:
       - sede3_data:/var/lib/postgresql/data
-      - ./db/init_schema.sql:/docker-entrypoint-initdb.d/init_schema.sql
-      - ./db/catalogs.sql:/docker-entrypoint-initdb.d/catalogs.sql
-      - ./db/seed_sede3.sql:/docker-entrypoint-initdb.d/seed_sede3.sql
+      - ./db/init_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - ./db/catalogs.sql:/docker-entrypoint-initdb.d/02_catalogs.sql
+      - ./db/seed_sede3.sql:/docker-entrypoint-initdb.d/03_seed.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d historia_clinica_sede3"]
       interval: 5s
