@@ -922,24 +922,13 @@ async def serve_ui():
                 </div>
 
                 <div class="d-flex align-items-center gap-3">
-                    <button class="btn btn-sm btn-outline-warning text-dark fw-semibold" onclick="probarAccesoDenegadoFase4()" title="Demostración de rechazo 403 para el docente">
-                        <i class="fa-solid fa-user-shield me-1"></i> Probar Rechazo 403 (Fase 4)
-                    </button>
-
-                    <div class="d-flex align-items-center gap-3 border-start ps-3">
-                        <span class="position-relative cursor-pointer">
-                            <i class="fa-solid fa-bell text-secondary"></i>
-                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="font-size: 0.6rem;">2+</span>
-                        </span>
-                        <span class="position-relative cursor-pointer">
-                            <i class="fa-solid fa-envelope text-secondary"></i>
-                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="font-size: 0.6rem;">7</span>
-                        </span>
-                        <div class="d-flex align-items-center gap-2">
-                            <span class="small fw-semibold text-secondary" id="navUserName">Douglas McGee</span>
-                            <span class="badge bg-primary" id="navUserRole">Médico</span>
-                            <button class="btn btn-sm btn-outline-danger ms-2" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i></button>
-                        </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="fa-solid fa-circle-user text-secondary fs-4"></i>
+                        <span class="small fw-semibold text-secondary" id="navUserName">Dr. Mateo Ruiz</span>
+                        <span class="badge bg-primary" id="navUserRole">Médico</span>
+                        <button class="btn btn-sm btn-outline-danger ms-2" onclick="logout()" title="Cerrar sesión">
+                            <i class="fa-solid fa-right-from-bracket me-1"></i> Salir
+                        </button>
                     </div>
                 </div>
             </header>
