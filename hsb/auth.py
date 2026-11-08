@@ -1,6 +1,7 @@
 """
 Módulo de Autenticación y Control de Acceso Basado en Roles (RBAC) con JWT.
 Implementa almacenamiento seguro de contraseñas con Hashing SHA-256,
+carga de credenciales dinámicas desde variables de entorno (.env),
 emisión de tokens HMAC-SHA256 y validación estricta de permisos según la Fase 4.
 """
 
@@ -28,10 +29,15 @@ def verify_password(plain_password: str, stored_hash_or_plain: str) -> bool:
         return True
     return hmac.compare_digest(plain_password, stored_hash_or_plain)
 
+def _get_user_password_hash(env_var: str, default_pw: str) -> str:
+    """Obtiene contraseña desde entorno (.env) y la devuelve hasheada con SHA-256."""
+    raw_pw = os.getenv(env_var, default_pw)
+    return hashlib.sha256(raw_pw.encode('utf-8')).hexdigest()
+
 # Directorio de Identidades Clínicas con Contraseñas Hasheadas (Cero Texto Plano)
 USUARIOS_PRUEBA = {
     "medico_ruiz": {
-        "password_hash": "673ab82a6530ee3bd9b04ee72a4d66afa7fa059aedc685cf44e35d29d90ebafa",  # hash de 'medico123'
+        "password_hash": _get_user_password_hash("MEDICO_PASSWORD", "medico123"),
         "rol": "medico",
         "nombre": "Dr. Mateo Ruiz",
         "sede": 2,
@@ -39,7 +45,7 @@ USUARIOS_PRUEBA = {
         "email": "mateo.ruiz@ips-salud.gov.co"
     },
     "paciente1001": {
-        "password_hash": "299fbb455c42239c86d2ee3b15403ed1b468259ecaedf0c3527451e1f0d63d59",  # hash de 'paciente123'
+        "password_hash": _get_user_password_hash("PACIENTE_PASSWORD", "paciente123"),
         "rol": "paciente",
         "nombre": "Carlos Perez",
         "sede": 1,
@@ -47,7 +53,7 @@ USUARIOS_PRUEBA = {
         "email": "carlos.perez1001@correo.com"
     },
     "admision_sincelejo": {
-        "password_hash": "aafde382e82826416915bfdeba0a270a086a87264ad1969bfc1494f8ed4abc6c",  # hash de 'admision123'
+        "password_hash": _get_user_password_hash("ADMISION_PASSWORD", "admision123"),
         "rol": "admisionista",
         "nombre": "Lic. Clara Martinez",
         "sede": 1,
@@ -55,7 +61,7 @@ USUARIOS_PRUEBA = {
         "email": "clara.martinez@sincelejo-salud.gov.co"
     },
     "auditor_calidad": {
-        "password_hash": "5b92db4dfb561dc69c949f34d36f5db0f8b30811be3a2949d85c5001279e9b1a",  # hash de 'auditor123'
+        "password_hash": _get_user_password_hash("AUDITOR_PASSWORD", "auditor123"),
         "rol": "auditor",
         "nombre": "Auditor Regional Sucre",
         "sede": 1,

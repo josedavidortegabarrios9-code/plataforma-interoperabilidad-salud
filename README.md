@@ -113,17 +113,22 @@ La plataforma utiliza autenticación multifactor obligatoria en dos etapas:
 1. **Paso 1 — Credenciales:** Se ingresa usuario y contraseña.
 2. **Paso 2 — Verificación de Segundo Factor (2FA):** El sistema emite un código criptográfico de 6 dígitos al correo institucional antes de generar el token JWT firmado con HMAC-SHA256.
 
-### Credenciales y Políticas de Seguridad
+### Roles y Políticas de Seguridad (Cero Credenciales Expuestas)
 
-> [!NOTE]
-> Las contraseñas se almacenan mediante **Hashing Criptográfico SHA-256** (cero texto plano en base de datos ni en interfaz). Los secretos del sistema y variables de entorno se configuran mediante el archivo `.env` (ver `.env.example`).
+> [!IMPORTANT]
+> **Gestión Segura de Secretos (Fase 4 & OWASP Top 10):**
+> Siguiendo los principios de seguridad de la arquitectura distribuida, **ninguna contraseña en texto plano se almacena en el repositorio Git ni se muestra en la interfaz web**.
+> 
+> * Las credenciales de cada usuario se definen de forma aislada en el archivo local `.env` (a partir de la plantilla [`.env.example`](.env.example)).
+> * El backend almacena y valida únicamente **Hashes Criptográficos SHA-256** mediante comparaciones de tiempo constante (`hmac.compare_digest`).
+> * Si no se define un archivo `.env`, el sistema utiliza hashes de desarrollo precalculados.
 
-| Rol | Identificador / Usuario | Contraseña Inicial Demo | Código 2FA | Vista Asignada | Permisos Asistenciales |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Médico** | `medico_ruiz` | `medico123` | `807286` | Clínica Central | Consulta de historias de las 3 sedes y registro de diagnósticos CIE-10. |
-| **Admisión** | `admision_sincelejo` | `admision123` | `807286` | Formulario Admisión | Admisión asistencial y asignación de triage. **Bloqueo a notas clínicas**. |
-| **Auditor** | `auditor_calidad` | `auditor123` | `807286` | Estado Nodos & Auditoría | Métricas del bus, conmutador de caídas y verificador SHA-256. |
-| **Paciente** | `paciente1001` | `paciente123` | `807286` | Portal Paciente | Resumen de sus atenciones y descarga de su Bundle FHIR R4. |
+| Rol Asistencial | Identificador / Usuario | Autenticación Multifactor | Vista Asignada en Plataforma | Permisos Asistenciales |
+| :--- | :--- | :--- | :--- | :--- |
+| **Médico Especialista** | `medico_ruiz` | Contraseña (`.env`) + Código 2FA (`807286`) | Clínica Central | Consulta de historias unificadas de las 3 sedes y registro de diagnósticos CIE-10. |
+| **Admisionista / Triage** | `admision_sincelejo` | Contraseña (`.env`) + Código 2FA (`807286`) | Formulario Admisión | Admisión de pacientes y categorización de triage. **Bloqueo estricto a notas clínicas**. |
+| **Auditor de Calidad** | `auditor_calidad` | Contraseña (`.env`) + Código 2FA (`807286`) | Estado Nodos & Auditoría | Monitoreo de salud de nodos, simulación de caídas y verificación SHA-256. |
+| **Paciente** | `paciente1001` | Contraseña (`.env`) + Código 2FA (`807286`) | Portal Paciente | Resumen de sus atenciones y descarga de su Bundle FHIR R4 personal. |
 
 ---
 
@@ -159,7 +164,76 @@ La plataforma utiliza autenticación multifactor obligatoria en dos etapas:
 
 ---
 
-## 📡 5. Pruebas de Integración y Comandos de Terminal (`curl`)
+## 🔍 5. Búsqueda y Verificación de Pacientes desde la Terminal (PostgreSQL & HSB)
+
+Durante una demostración técnica o sustentación, puedes consultar directamente la persistencia en las bases de datos de cada sede y validar que los registros existan tanto en los motores relacionales como en la capa FHIR unificada.
+
+### A. Consultar Registros Directamente en los Contenedores PostgreSQL
+
+Cada sede cuenta con su base de datos independiente. Ejecuta estos comandos en tu terminal de Linux:
+
+#### 1. Buscar un paciente específico por Cédula / Documento (ejemplo: `1001`):
+```bash
+# Consultar en Sede 1 - Sincelejo (Laboratorio Clínico)
+docker exec -it pg_sede1 psql -U postgres -d historia_clinica_sede1 -c \
+  "SELECT u.numero_documento, u.primer_nombre, u.primer_apellido, a.id_atencion, a.fecha_hora_ingreso, a.causa_atencion FROM usuario u LEFT JOIN atencion a ON u.id_usuario = a.id_usuario WHERE u.numero_documento = '1001';"
+
+# Consultar en Sede 2 - Cartagena (Urgencias / Hospitalización)
+docker exec -it pg_sede2 psql -U postgres -d historia_clinica_sede2 -c \
+  "SELECT u.numero_documento, u.primer_nombre, u.primer_apellido, a.id_atencion, a.fecha_hora_ingreso, a.causa_atencion FROM usuario u LEFT JOIN atencion a ON u.id_usuario = a.id_usuario WHERE u.numero_documento = '1001';"
+
+# Consultar en Sede 3 - Corozal (Consulta Externa Comunitaria)
+docker exec -it pg_sede3 psql -U postgres -d historia_clinica_sede3 -c \
+  "SELECT u.numero_documento, u.primer_nombre, u.primer_apellido, a.id_atencion, a.fecha_hora_ingreso, a.causa_atencion FROM usuario u LEFT JOIN atencion a ON u.id_usuario = a.id_usuario WHERE u.numero_documento = '1001';"
+```
+
+#### 2. Listar los últimos pacientes registrados en una sede:
+```bash
+# Ver los últimos 5 pacientes registrados en la Sede 2 (Cartagena)
+docker exec -it pg_sede2 psql -U postgres -d historia_clinica_sede2 -c \
+  "SELECT u.id_usuario, u.numero_documento, u.primer_nombre, u.primer_apellido, u.fecha_nacimiento, u.cod_sexo, a.id_atencion, a.fecha_hora_ingreso FROM usuario u JOIN atencion a ON u.id_usuario = a.id_usuario ORDER BY a.fecha_hora_ingreso DESC LIMIT 5;"
+```
+
+#### 3. Consultar diagnósticos CIE-10 asignados a un paciente:
+```bash
+docker exec -it pg_sede2 psql -U postgres -d historia_clinica_sede2 -c \
+  "SELECT d.id_atencion, d.cod_cie10, c.descripcion, d.tipo FROM diagnostico d LEFT JOIN cat_cie10 c ON d.cod_cie10 = c.cod_cie10;"
+```
+
+---
+
+### B. Consultar la Historia Clínica Unificada vía API HSB (HTTP / REST)
+
+Para consultar la historia combinada de un paciente en las 3 sedes mediante la terminal:
+
+```bash
+# Consulta como Médico (acceso completo a diagnósticos y atenciones multisede)
+curl -s -H "X-Rol: medico" http://localhost:8000/paciente/1001/historia-unificada | jq .
+```
+*Salida:* Devuelve un JSON consolidado con el perfil demográfico del paciente, la cobertura FHIR (100%), las atenciones ordenadas cronológicamente y el estado operativo de cada sede consultada.
+
+---
+
+### C. Descargar y Validar el Bundle FHIR R4 desde la Terminal
+
+Para inspeccionar el recurso interoperable oficial generado por el HSB:
+
+```bash
+# Obtener Bundle de transacción FHIR R4
+curl -s http://localhost:8000/paciente/1001/bundle | jq '{resourceType: .resourceType, type: .type, total_entries: (.entry | length)}'
+```
+*Salida esperada:*
+```json
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "total_entries": 4
+}
+```
+
+---
+
+## 📡 6. Pruebas de Integración y Comandos de Terminal (`curl`)
 
 Puedes probar todos los flujos de backend ejecutando estos comandos desde cualquier terminal:
 
@@ -238,15 +312,16 @@ curl -X POST "http://localhost:8000/hsb/csv?sede=3" \
 
 ---
 
-## 🛡️ 6. Pruebas de Seguridad y Control de Acceso (RBAC)
+## 🛡️ 7. Pruebas de Seguridad y Control de Acceso (RBAC)
 
 ### Rechazo de Acceso No Autorizado (HTTP 403 Forbidden)
 
 1. Obtener token de la admisionista:
 ```bash
+# Iniciar sesión con el usuario admisionista (la contraseña se toma de las variables de entorno locales)
 TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admision_sincelejo","password":"admision123"}' \
+  -d '{"username":"admision_sincelejo","password":"'${ADMISION_PASSWORD:-admision123}'"}' \
   | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
 ```
 
@@ -284,7 +359,7 @@ curl http://localhost:8000/audit/verify
 
 ---
 
-## 🧪 8. Ejecución de la Suite de Pruebas Automatizadas
+## 🧪 9. Ejecución de la Suite de Pruebas Automatizadas
 
 La plataforma incluye 20 pruebas automáticas unitarias y de integración:
 
