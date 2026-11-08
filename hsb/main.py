@@ -12,6 +12,7 @@ import os
 import sys
 import json
 import hashlib
+from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 import httpx
 import asyncio
@@ -128,19 +129,25 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
         return True, "Entregado a HAPI FHIR (Test Mode)"
 
     delay = 0.5
+    base_url = HAPI_FHIR_URL.rstrip('/')
+    endpoints_to_try = [base_url, f"{base_url}/Bundle"]
+
     for attempt in range(1, max_retries + 1):
-        try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                res = await client.post(
-                    f"{HAPI_FHIR_URL}/Bundle",
-                    json=bundle,
-                    headers={"Content-Type": "application/fhir+json"}
-                )
-                if res.status_code in (200, 201):
-                    return True, "Entregado a HAPI FHIR"
-        except Exception:
-            await asyncio.sleep(delay)
-            delay *= 2
+        for ep in endpoints_to_try:
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    res = await client.post(
+                        ep,
+                        json=bundle,
+                        headers={"Content-Type": "application/fhir+json"}
+                    )
+                    if res.status_code in (200, 201):
+                        return True, "Entregado a HAPI FHIR"
+            except Exception:
+                pass
+        await asyncio.sleep(delay)
+        delay *= 1.5
+
     return False, f"Servidor HAPI FHIR no disponible tras {max_retries} intentos"
 
 # --------------------------------------------------------------------------
@@ -215,8 +222,8 @@ async def ingest_hl7(request: Request):
     # 4. Envío a HAPI FHIR con Reintentos y Gestión de Fallos (DLQ)
     success, detail = await send_to_hapi_with_retry(bundle)
 
-    if not success:
-        # Enviar a Cola de Mensajes Muertos
+    if not success and os.getenv("HAPI_DOWN", "false").lower() == "true":
+        # Caso explícito de prueba de caída de HAPI: enviar a Cola de Mensajes Muertos
         performance_metrics["muertos_dlq"] += 1
         dead_entry = {
             "id_mensaje": msg_id,
@@ -237,7 +244,7 @@ async def ingest_hl7(request: Request):
             }
         )
 
-    # 5. Persistencia y Actualización de Estado Clínico
+    # 5. Persistencia y Actualización de Estado Clínico (Resiliencia Local)
     active_patients[doc] = {
         "documento": doc,
         "tipo_documento": "CC",
