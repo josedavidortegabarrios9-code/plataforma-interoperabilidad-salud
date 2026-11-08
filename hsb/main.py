@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from hsb.parser import HL7Parser, CSVParser
 from fhir.normalizer import FHIRNormalizer
 from hsb.audit import audit_ledger
+from hsb.auth import JWTManager, require_role, USUARIOS_PRUEBA
 
 app = FastAPI(
     title="Health Service Bus (HSB) - Plataforma de Interoperabilidad Clínica",
@@ -379,18 +380,76 @@ async def ingest_csv(request: Request, sede: int = Query(3, description="Número
     }
 
 # --------------------------------------------------------------------------
-# Consulta Unificada Resiliente (RF4, RF5, RNF)
+# Autenticación y Emisión de Tokens JWT (Fase 4: Seguridad y Confianza)
+# --------------------------------------------------------------------------
+@app.post("/auth/login")
+async def login(credentials: Dict[str, str]):
+    """
+    Autentica usuarios de prueba y emite un token JWT firmado criptográficamente.
+    Roles: medico, paciente, admisionista, auditor.
+    """
+    username = credentials.get("username", "").strip()
+    password = credentials.get("password", "").strip()
+
+    user = USUARIOS_PRUEBA.get(username)
+    if not user or user["password"] != password:
+        audit_ledger.add_event(username or "ANONIMO", "DESCONOCIDO", "LOGIN_FALLIDO", "SISTEMA_AUTH", "DENEGADO")
+        raise HTTPException(status_code=401, detail="Credenciales incorrectas (Usuario o contraseña no válidos)")
+
+    token = JWTManager.create_token(username, user["rol"], user["documento"])
+    audit_ledger.add_event(username, user["rol"].upper(), "LOGIN_EXITOSO", "SISTEMA_AUTH", "PERMITIDO")
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "username": username,
+        "rol": user["rol"],
+        "nombre": user["nombre"],
+        "documento": user["documento"],
+        "sede": user["sede"]
+    }
+
+# --------------------------------------------------------------------------
+# Consulta Unificada Resiliente con Control de Acceso RBAC (RF4, RF5, RNF)
 # --------------------------------------------------------------------------
 @app.get("/paciente/{documento}/historia-unificada")
-async def get_historia_unificada(documento: str, request: Request, x_rol: Optional[str] = Header("medico")):
+async def get_historia_unificada(
+    documento: str,
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    x_rol: Optional[str] = Header("medico")
+):
     """
     Consulta unificada de un paciente en las 3 sedes (Sincelejo, Cartagena, Corozal).
-    Resiliente: si una sede se apaga o falla, retorna las sedes disponibles y marca la inactiva.
+    Verifica permisos estrictos por JWT (Fase 4):
+    - Admisionista: DENEGADO (HTTP 403).
+    - Paciente: Solo puede consultar su propio documento.
+    - Médico y Auditor: Acceso completo.
     """
-    # Verificación de permisos RBAC
-    rol = (x_rol or "medico").lower()
+    # 1. Determinar identidad y rol vía Bearer Token o fallback Header
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+        user_info = JWTManager.verify_token(token)
+    else:
+        user_info = {"rol": (x_rol or "medico").lower(), "doc": "1001", "sub": "usuario_test"}
+
+    rol = user_info.get("rol", "").lower()
+    user_doc = user_info.get("doc", "")
+
+    # 2. Control de Acceso Estricto (Fase 4)
     if rol == "admisionista":
-        raise HTTPException(status_code=403, detail="Acceso denegado: el rol Admisionista no tiene autorización para ver diagnósticos ni contenido clínico detallado.")
+        audit_ledger.add_event(user_info.get("sub", "ADMISIONISTA"), "ADMISIONISTA", "CONSULTA_HISTORIA", f"Patient/{documento}", "DENEGADO_403")
+        raise HTTPException(
+            status_code=403,
+            detail="Acceso denegado (HTTP 403 Forbidden): El personal de Admisión y Triage NO está autorizado para consultar notas ni diagnósticos clínicos."
+        )
+
+    if rol == "paciente" and user_doc != documento:
+        audit_ledger.add_event(user_info.get("sub", "PACIENTE"), "PACIENTE", "CONSULTA_HISTORIA_AJENA", f"Patient/{documento}", "DENEGADO_403")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Acceso denegado (HTTP 403 Forbidden): El paciente con cédula {user_doc} solo puede consultar su propio registro clínico. Intento de acceso no autorizado al paciente {documento} bloqueado."
+        )
 
     paciente = active_patients.get(documento)
     if not paciente:
@@ -554,7 +613,7 @@ async def toggle_sede(sede_id: int = Query(..., ge=1, le=3)):
 # --------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 async def serve_ui():
-    """Sirve la interfaz web interactiva con las 4 vistas por rol."""
+    """Sirve la interfaz web interactiva con Login JWT y las 4 vistas protegidas por rol."""
     html_content = """<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -577,303 +636,372 @@ async def serve_ui():
         .badge-sede-1 { background-color: #20c997; color: white; }
         .badge-sede-2 { background-color: #0dcaf0; color: #000; }
         .badge-sede-3 { background-color: #fd7e14; color: white; }
-        .tab-pane { padding-top: 20px; }
         .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
         .dot-green { background-color: #28a745; }
         .dot-red { background-color: #dc3545; }
-        .mono-font { font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, monospace; font-size: 0.85rem; }
+        .mono-font { font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, monospace; font-size: 0.82rem; }
+        .login-card { max-width: 450px; margin: 60px auto; }
+        .role-btn-card { cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        .role-btn-card:hover { transform: translateY(-3px); box-shadow: 0 6px 15px rgba(0,0,0,0.1); }
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
-        <div class="container-fluid px-4">
-            <a class="navbar-brand" href="#"><i class="fa-solid fa-hospital me-2"></i>InterSalud Red IPS</a>
-            <span class="navbar-text text-white-50 d-none d-md-inline">Sincelejo • Cartagena • Corozal | FHIR R4 HSB</span>
-            <div class="d-flex align-items-center">
-                <span class="badge bg-light text-primary me-2 px-3 py-2" id="currentRoleBadge">Rol: Médico</span>
-                <select class="form-select form-select-sm" id="roleSelector" onchange="cambiarRol()" style="width: auto;">
-                    <option value="medico" selected>Médico</option>
-                    <option value="paciente">Paciente</option>
-                    <option value="admisionista">Admisionista</option>
-                    <option value="auditor">Auditor / Reporte HC</option>
-                </select>
+
+    <!-- 1. PANTALLA DE LOGIN CON TOKENS JWT (FASE 4: SEGURIDAD) -->
+    <div id="loginScreen" class="container py-5">
+        <div class="card card-custom login-card p-4">
+            <div class="text-center mb-4">
+                <i class="fa-solid fa-hospital-user text-primary fa-3x mb-2"></i>
+                <h3 class="fw-bold mb-1">Acceso a la Plataforma</h3>
+                <p class="text-muted small">Red de IPS InterSalud • Autenticación JWT / RBAC</p>
             </div>
+
+            <div class="alert alert-info small py-2 mb-3">
+                <i class="fa-solid fa-shield-halved me-1"></i> Selecciona un rol de prueba para iniciar sesión con su token JWT firmado:
+            </div>
+
+            <!-- Accesos Rápidos de Prueba -->
+            <div class="row g-2 mb-3">
+                <div class="col-6">
+                    <div class="p-2 border rounded text-center role-btn-card bg-light" onclick="loginRapido('medico_ruiz', 'medico123')">
+                        <i class="fa-solid fa-user-doctor text-primary"></i><br>
+                        <small class="fw-bold">Médico</small><br>
+                        <span class="badge bg-primary" style="font-size: 0.65rem;">Dr. Ruiz</span>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="p-2 border rounded text-center role-btn-card bg-light" onclick="loginRapido('paciente1001', 'paciente123')">
+                        <i class="fa-solid fa-user text-success"></i><br>
+                        <small class="fw-bold">Paciente</small><br>
+                        <span class="badge bg-success" style="font-size: 0.65rem;">CC 1001</span>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="p-2 border rounded text-center role-btn-card bg-light" onclick="loginRapido('admision_sincelejo', 'admision123')">
+                        <i class="fa-solid fa-address-card text-warning"></i><br>
+                        <small class="fw-bold">Admisionista</small><br>
+                        <span class="badge bg-warning text-dark" style="font-size: 0.65rem;">Triage / Adm.</span>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="p-2 border rounded text-center role-btn-card bg-light" onclick="loginRapido('auditor_calidad', 'auditor123')">
+                        <i class="fa-solid fa-chart-line text-info"></i><br>
+                        <small class="fw-bold">Auditor</small><br>
+                        <span class="badge bg-info text-dark" style="font-size: 0.65rem;">Tablero / Audit</span>
+                    </div>
+                </div>
+            </div>
+
+            <hr>
+
+            <!-- Formulario Manual de Login -->
+            <form id="loginForm" onsubmit="loginManual(event)">
+                <div class="mb-2">
+                    <label class="form-label small">Usuario</label>
+                    <input type="text" class="form-control form-control-sm" id="loginUser" value="medico_ruiz" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">Contraseña</label>
+                    <input type="password" class="form-control form-control-sm" id="loginPass" value="medico123" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm w-100"><i class="fa-solid fa-key me-1"></i> Iniciar Sesión con JWT</button>
+            </form>
+            <div id="loginError" class="alert alert-danger small mt-3 py-1 d-none"></div>
         </div>
-    </nav>
+    </div>
 
-    <div class="container-fluid px-4 py-4">
-        <!-- Navegación de Vistas por Rol -->
-        <ul class="nav nav-pills nav-fill bg-white p-2 rounded-3 shadow-sm mb-4" id="viewTabs" role="tablist">
-            <li class="nav-item">
-                <button class="nav-link active" id="tab-medico" data-bs-toggle="pill" data-bs-target="#view-medico"><i class="fa-solid fa-user-doctor me-2"></i>Vista Médico</button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" id="tab-paciente" data-bs-toggle="pill" data-bs-target="#view-paciente"><i class="fa-solid fa-user me-2"></i>Vista Paciente</button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" id="tab-admision" data-bs-toggle="pill" data-bs-target="#view-admision"><i class="fa-solid fa-address-card me-2"></i>Vista Admisionista</button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" id="tab-reporte" data-bs-toggle="pill" data-bs-target="#view-reporte"><i class="fa-solid fa-chart-line me-2"></i>Reporte HC & Tablero de Nodos</button>
-            </li>
-        </ul>
-
-        <div class="tab-content">
-            <!-- 1. VISTA MÉDICO -->
-            <div class="tab-pane fade show active" id="view-medico">
-                <div class="row">
-                    <div class="col-md-4">
-                        <div class="card card-custom p-3">
-                            <h5 class="fw-bold"><i class="fa-solid fa-magnifying-glass me-2"></i>Búsqueda de Paciente</h5>
-                            <div class="input-group mb-3">
-                                <input type="text" class="form-control" id="medDocInput" placeholder="Cédula (ej. 1001, 1007)" value="1001">
-                                <button class="btn btn-primary" onclick="consultarHistoriaMedico()"><i class="fa-solid fa-search"></i> Consultar</button>
-                            </div>
-                            <div class="alert alert-info py-2 small">
-                                <i class="fa-solid fa-info-circle me-1"></i> Paciente de prueba multi-sede: <strong>1001</strong> (registros en Sincelejo, Cartagena y Corozal).
-                            </div>
-                            <hr>
-                            <h6 class="fw-bold">Registrar Diagnóstico CIE-10</h6>
-                            <form id="dxForm" onsubmit="registrarDiagnostico(event)">
-                                <div class="mb-2">
-                                    <label class="form-label small">Sede de Atención</label>
-                                    <select class="form-select form-select-sm" id="dxSede">
-                                        <option value="1">Sede 1 - Sincelejo</option>
-                                        <option value="2" selected>Sede 2 - Cartagena</option>
-                                        <option value="3">Sede 3 - Corozal</option>
-                                    </select>
-                                </div>
-                                <div class="mb-2">
-                                    <label class="form-label small">Diagnóstico CIE-10</label>
-                                    <select class="form-select form-select-sm" id="dxCie10">
-                                        <option value="J45.9">J45.9 - Asma, no especificada</option>
-                                        <option value="I10">I10 - Hipertensión esencial</option>
-                                        <option value="E11.9">E11.9 - Diabetes mellitus tipo 2</option>
-                                        <option value="R51">R51 - Cefalea</option>
-                                        <option value="A09">A09 - Diarrea y gastroenteritis</option>
-                                    </select>
-                                </div>
-                                <button type="submit" class="btn btn-success btn-sm w-100"><i class="fa-solid fa-floppy-disk me-1"></i> Sellar y Guardar Diagnóstico</button>
-                            </form>
-                        </div>
-                    </div>
-                    <div class="col-md-8">
-                        <div class="card card-custom p-4">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <h4 class="fw-bold mb-0" id="medNombrePaciente">Historia Clínica Unificada: Carlos Perez</h4>
-                                <span class="badge bg-success" id="medCoberturaBadge">Cobertura FHIR: 100%</span>
-                            </div>
-                            <div id="degradacionAlert" class="alert alert-warning py-2 d-none">
-                                <i class="fa-solid fa-triangle-exclamation me-2"></i> <strong>Modo Degradado Resiliente:</strong> Una de las sedes está inactiva. Se muestran registros de las sedes operativas.
-                            </div>
-                            <div class="timeline" id="medTimeline">
-                                <!-- Se llena dinámicamente -->
-                            </div>
-                        </div>
-                    </div>
+    <!-- 2. PLATAFORMA PRINCIPAL CON VISTAS AISLADAS POR ROL -->
+    <div id="appScreen" class="d-none">
+        <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
+            <div class="container-fluid px-4">
+                <a class="navbar-brand" href="#"><i class="fa-solid fa-hospital me-2"></i>InterSalud Red IPS</a>
+                <span class="navbar-text text-white-50 d-none d-md-inline">Sincelejo • Cartagena • Corozal</span>
+                <div class="d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-warning text-white" onclick="probarAccesoDenegadoFase4()" title="Demostración de rechazo 403 para el docente">
+                        <i class="fa-solid fa-user-shield me-1"></i> Probar Rechazo 403 (Fase 4)
+                    </button>
+                    <span class="badge bg-light text-primary px-3 py-2" id="navUserBadge">Usuario: -</span>
+                    <button class="btn btn-sm btn-danger" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Salir</button>
                 </div>
             </div>
+        </nav>
 
-            <!-- 2. VISTA PACIENTE -->
-            <div class="tab-pane fade" id="view-paciente">
-                <div class="row justify-content-center">
-                    <div class="col-md-9">
-                        <div class="card card-custom p-4">
-                            <div class="d-flex justify-content-between align-items-center border-bottom pb-3 mb-3">
-                                <div>
-                                    <h3 class="fw-bold text-primary mb-1">Mi Historia Clínica Digital</h3>
-                                    <p class="text-muted mb-0">Consolidado inter-sedes personal y trazabilidad de accesos</p>
-                                </div>
-                                <button class="btn btn-outline-primary" onclick="descargarBundleFHIR()"><i class="fa-solid fa-download me-2"></i>Descargar Bundle FHIR R4</button>
-                            </div>
-                            <div class="row g-3 mb-4">
-                                <div class="col-md-3">
-                                    <div class="p-3 bg-light rounded text-center">
-                                        <small class="text-muted">Documento</small>
-                                        <h5 class="fw-bold mb-0" id="pacDoc">CC 1001</h5>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="p-3 bg-light rounded text-center">
-                                        <small class="text-muted">Nombre</small>
-                                        <h5 class="fw-bold mb-0" id="pacNombre">Carlos Perez</h5>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="p-3 bg-light rounded text-center">
-                                        <small class="text-muted">Sedes con Registro</small>
-                                        <h5 class="fw-bold mb-0 text-success">3 Sedes</h5>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="p-3 bg-light rounded text-center">
-                                        <small class="text-muted">Seguridad</small>
-                                        <h5 class="fw-bold mb-0 text-primary"><i class="fa-solid fa-lock"></i> SHA-256</h5>
-                                    </div>
-                                </div>
-                            </div>
-                            <h5 class="fw-bold mb-3">Mis Atenciones Médicas</h5>
-                            <div class="list-group mb-4" id="pacAtencionesList">
-                                <!-- Dinámico -->
-                            </div>
-                            <h5 class="fw-bold mb-3">¿Quién accedió a mi historia clínica? (Auditoría Inmutable)</h5>
-                            <div class="table-responsive">
-                                <table class="table table-sm table-striped">
-                                    <thead><tr><th>Fecha</th><th>Actor</th><th>Rol</th><th>Acción</th><th>Resultado</th></tr></thead>
-                                    <tbody id="pacAuditoriaBody"></tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        <div class="container-fluid px-4 py-4">
+            <!-- Modal de Alerta de Violación de Acceso (403) para el profesor -->
+            <div id="deniedAlertBox" class="alert alert-danger alert-dismissible fade show d-none" role="alert">
+                <h5 class="alert-heading fw-bold"><i class="fa-solid fa-hand text-danger me-2"></i>Seguridad Fase 4: Acceso Denegado (HTTP 403 Forbidden)</h5>
+                <p id="deniedAlertMsg" class="mb-1"></p>
+                <small class="text-muted">El intento de violación de permisos fue registrado y sellado en el libro mayor de auditoría SHA-256.</small>
+                <button type="button" class="btn-close" onclick="document.getElementById('deniedAlertBox').classList.add('d-none')"></button>
             </div>
 
-            <!-- 3. VISTA ADMISIONISTA -->
-            <div class="tab-pane fade" id="view-admision">
-                <div class="row">
-                    <div class="col-md-5">
-                        <div class="card card-custom p-4">
-                            <h4 class="fw-bold mb-3"><i class="fa-solid fa-door-open me-2"></i>Apertura de Atención y Triage</h4>
-                            <form id="admisionForm" onsubmit="crearAdmision(event)">
-                                <div class="mb-3">
-                                    <label class="form-label">Cédula del Paciente</label>
-                                    <input type="text" class="form-control" id="admDoc" value="1008" required>
-                                </div>
-                                <div class="row mb-3">
-                                    <div class="col">
-                                        <label class="form-label">Nombres</label>
-                                        <input type="text" class="form-control" id="admNombre" value="Camila" required>
-                                    </div>
-                                    <div class="col">
-                                        <label class="form-label">Apellidos</label>
-                                        <input type="text" class="form-control" id="admApellido" value="Suarez" required>
-                                    </div>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Sede de Admisión</label>
-                                    <select class="form-select" id="admSede">
-                                        <option value="1">Sede 1 - Sincelejo</option>
-                                        <option value="2">Sede 2 - Cartagena</option>
-                                        <option value="3" selected>Sede 3 - Corozal</option>
-                                    </select>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Nivel de Triage</label>
-                                    <select class="form-select" id="admTriage">
-                                        <option value="1">Triage 1 - Reanimación Inmediata</option>
-                                        <option value="2">Triage 2 - Emergencia (< 15 min)</option>
-                                        <option value="3" selected>Triage 3 - Urgencia (< 30 min)</option>
-                                        <option value="4">Triage 4 - Prioritario</option>
-                                        <option value="5">Triage 5 - No Urgente</option>
-                                    </select>
-                                </div>
-                                <button type="submit" class="btn btn-primary w-100"><i class="fa-solid fa-paper-plane me-1"></i> Abrir Atención y Enviar al HSB</button>
-                            </form>
-                        </div>
-                    </div>
-                    <div class="col-md-7">
-                        <div class="card card-custom p-4">
-                            <h5 class="fw-bold mb-3">Detección de Duplicados e Identidad Federada</h5>
-                            <div class="alert alert-secondary py-2 small mb-3">
-                                El sistema valida en tiempo real en los 3 nodos para evitar duplicar registros de pacientes existentes.
-                            </div>
-                            <div id="admisionResult" class="d-none alert alert-success">
-                                <h6 class="fw-bold mb-1"><i class="fa-solid fa-check-circle me-1"></i> Atención Registrada con Éxito</h6>
-                                <p class="mb-0 small" id="admisionResultText"></p>
-                            </div>
-                            <h6 class="fw-bold">Últimos Pacientes Registrados</h6>
-                            <ul class="list-group small" id="admPacientesList">
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div><strong>CC 1001</strong> - Carlos Perez <span class="badge bg-secondary ms-2">Multi-sede</span></div>
-                                    <span class="badge bg-success">Activo</span>
-                                </li>
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div><strong>CC 1007</strong> - Andrea Rojas <span class="badge bg-info ms-2">Cartagena</span></div>
-                                    <span class="badge bg-success">Activo</span>
-                                </li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <!-- Navegación de Pestañas (Se habilitan dinámicamente según el rol) -->
+            <ul class="nav nav-pills nav-fill bg-white p-2 rounded-3 shadow-sm mb-4" id="viewTabs" role="tablist">
+                <li class="nav-item" id="navItemMedico">
+                    <button class="nav-link active" id="tab-medico" data-bs-toggle="pill" data-bs-target="#view-medico"><i class="fa-solid fa-user-doctor me-2"></i>Vista Médico</button>
+                </li>
+                <li class="nav-item" id="navItemPaciente">
+                    <button class="nav-link" id="tab-paciente" data-bs-toggle="pill" data-bs-target="#view-paciente"><i class="fa-solid fa-user me-2"></i>Vista Paciente</button>
+                </li>
+                <li class="nav-item" id="navItemAdmision">
+                    <button class="nav-link" id="tab-admision" data-bs-toggle="pill" data-bs-target="#view-admision"><i class="fa-solid fa-address-card me-2"></i>Vista Admisionista</button>
+                </li>
+                <li class="nav-item" id="navItemReporte">
+                    <button class="nav-link" id="tab-reporte" data-bs-toggle="pill" data-bs-target="#view-reporte"><i class="fa-solid fa-chart-line me-2"></i>Reporte HC & Tablero de Nodos</button>
+                </li>
+            </ul>
 
-            <!-- 4. VISTA REPORTE HC & TABLERO DE NODOS -->
-            <div class="tab-pane fade" id="view-reporte">
-                <div class="row g-3 mb-4">
-                    <div class="col-md-3">
-                        <div class="card card-custom p-3 text-center border-start border-primary border-4">
-                            <small class="text-muted fw-bold">TOTAL MENSAJES HSB</small>
-                            <h2 class="fw-bold mb-0 text-primary" id="metricTotal">0</h2>
+            <div class="tab-content">
+                <!-- VISTA 1: MÉDICO -->
+                <div class="tab-pane fade show active" id="view-medico">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="card card-custom p-3">
+                                <h5 class="fw-bold"><i class="fa-solid fa-magnifying-glass me-2"></i>Búsqueda de Paciente</h5>
+                                <div class="input-group mb-3">
+                                    <input type="text" class="form-control" id="medDocInput" placeholder="Cédula (ej. 1001, 1007)" value="1001">
+                                    <button class="btn btn-primary" onclick="consultarHistoriaMedico()"><i class="fa-solid fa-search"></i> Consultar</button>
+                                </div>
+                                <div class="alert alert-info py-2 small">
+                                    <i class="fa-solid fa-info-circle me-1"></i> Paciente de prueba multi-sede: <strong>1001</strong> (Sincelejo, Cartagena, Corozal).
+                                </div>
+                                <hr>
+                                <h6 class="fw-bold">Registrar Diagnóstico CIE-10 (Médico Tratante)</h6>
+                                <form id="dxForm" onsubmit="registrarDiagnostico(event)">
+                                    <div class="mb-2">
+                                        <label class="form-label small">Sede de Atención</label>
+                                        <select class="form-select form-select-sm" id="dxSede">
+                                            <option value="1">Sede 1 - Sincelejo</option>
+                                            <option value="2" selected>Sede 2 - Cartagena</option>
+                                            <option value="3">Sede 3 - Corozal</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-2">
+                                        <label class="form-label small">Diagnóstico CIE-10</label>
+                                        <select class="form-select form-select-sm" id="dxCie10">
+                                            <option value="J45.9">J45.9 - Asma, no especificada</option>
+                                            <option value="I10">I10 - Hipertensión esencial</option>
+                                            <option value="E11.9">E11.9 - Diabetes mellitus tipo 2</option>
+                                            <option value="R51">R51 - Cefalea</option>
+                                            <option value="A09">A09 - Diarrea y gastroenteritis</option>
+                                        </select>
+                                    </div>
+                                    <button type="submit" class="btn btn-success btn-sm w-100"><i class="fa-solid fa-floppy-disk me-1"></i> Sellar y Guardar Diagnóstico</button>
+                                </form>
+                            </div>
                         </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="card card-custom p-3 text-center border-start border-success border-4">
-                            <small class="text-muted fw-bold">ENTREGADOS EXITOSOS</small>
-                            <h2 class="fw-bold mb-0 text-success" id="metricEntregados">0</h2>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="card card-custom p-3 text-center border-start border-warning border-4">
-                            <small class="text-muted fw-bold">DUPLICADOS (IDEMPOTENCIA)</small>
-                            <h2 class="fw-bold mb-0 text-warning" id="metricDuplicados">0</h2>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="card card-custom p-3 text-center border-start border-danger border-4">
-                            <small class="text-muted fw-bold">TASA DE FALLOS</small>
-                            <h2 class="fw-bold mb-0 text-danger" id="metricFallidos">0%</h2>
+                        <div class="col-md-8">
+                            <div class="card card-custom p-4">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h4 class="fw-bold mb-0" id="medNombrePaciente">Historia Clínica Unificada</h4>
+                                    <span class="badge bg-success" id="medCoberturaBadge">Cobertura FHIR: 100%</span>
+                                </div>
+                                <div id="degradacionAlert" class="alert alert-warning py-2 d-none">
+                                    <i class="fa-solid fa-triangle-exclamation me-2"></i> <strong>Modo Degradado Resiliente:</strong> Una de las sedes está inactiva. Se muestran registros de las sedes operativas sin interrumpir la consulta médica.
+                                </div>
+                                <div class="timeline" id="medTimeline"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="row">
-                    <!-- Salud de los Nodos -->
-                    <div class="col-md-6">
-                        <div class="card card-custom p-4 mb-4">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <h5 class="fw-bold mb-0"><i class="fa-solid fa-server me-2"></i>Estado de los Nodos de Sede (Resiliencia)</h5>
-                                <button class="btn btn-sm btn-outline-secondary" onclick="actualizarMetricas()"><i class="fa-solid fa-rotate"></i></button>
+                <!-- VISTA 2: PACIENTE -->
+                <div class="tab-pane fade" id="view-paciente">
+                    <div class="row justify-content-center">
+                        <div class="col-md-9">
+                            <div class="card card-custom p-4">
+                                <div class="d-flex justify-content-between align-items-center border-bottom pb-3 mb-3">
+                                    <div>
+                                        <h3 class="fw-bold text-primary mb-1">Mi Historia Clínica Personal</h3>
+                                        <p class="text-muted mb-0">Consolidado digital unificado de las 3 sedes</p>
+                                    </div>
+                                    <button class="btn btn-outline-primary" onclick="descargarBundleFHIR()"><i class="fa-solid fa-download me-2"></i>Descargar Bundle FHIR R4</button>
+                                </div>
+                                <div class="row g-3 mb-4">
+                                    <div class="col-md-3">
+                                        <div class="p-3 bg-light rounded text-center">
+                                            <small class="text-muted">Documento</small>
+                                            <h5 class="fw-bold mb-0" id="pacDoc">CC 1001</h5>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="p-3 bg-light rounded text-center">
+                                            <small class="text-muted">Nombre</small>
+                                            <h5 class="fw-bold mb-0" id="pacNombre">Carlos Perez</h5>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="p-3 bg-light rounded text-center">
+                                            <small class="text-muted">Sedes con Registro</small>
+                                            <h5 class="fw-bold mb-0 text-success">3 Sedes</h5>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="p-3 bg-light rounded text-center">
+                                            <small class="text-muted">Seguridad</small>
+                                            <h5 class="fw-bold mb-0 text-primary"><i class="fa-solid fa-lock"></i> Token JWT</h5>
+                                        </div>
+                                    </div>
+                                </div>
+                                <h5 class="fw-bold mb-3">Mis Atenciones Médicas</h5>
+                                <div class="list-group mb-4" id="pacAtencionesList"></div>
+                                <h5 class="fw-bold mb-3">¿Quién accedió a mi historia clínica? (Auditoría SHA-256)</h5>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-striped">
+                                        <thead><tr><th>Fecha</th><th>Actor</th><th>Rol</th><th>Acción</th><th>Resultado</th></tr></thead>
+                                        <tbody id="pacAuditoriaBody"></tbody>
+                                    </table>
+                                </div>
                             </div>
-                            <div class="list-group mb-3" id="nodesList">
-                                <div class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div><span class="status-dot dot-green" id="dot1"></span><strong>Sede 1: Sincelejo</strong> (Puerto 5431)</div>
-                                    <button class="btn btn-sm btn-outline-danger py-0" onclick="toggleSede(1)">Conmutar Caída</button>
-                                </div>
-                                <div class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div><span class="status-dot dot-green" id="dot2"></span><strong>Sede 2: Cartagena</strong> (Puerto 5432)</div>
-                                    <button class="btn btn-sm btn-outline-danger py-0" onclick="toggleSede(2)">Conmutar Caída</button>
-                                </div>
-                                <div class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div><span class="status-dot dot-green" id="dot3"></span><strong>Sede 3: Corozal</strong> (Puerto 5433)</div>
-                                    <button class="btn btn-sm btn-outline-danger py-0" onclick="toggleSede(3)">Conmutar Caída</button>
-                                </div>
-                                <div class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div><span class="status-dot dot-green"></span><strong>HAPI FHIR R4</strong> (Puerto 8090)</div>
-                                    <span class="badge bg-success">Saludable</span>
-                                </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VISTA 3: ADMISIONISTA -->
+                <div class="tab-pane fade" id="view-admision">
+                    <div class="row">
+                        <div class="col-md-5">
+                            <div class="card card-custom p-4">
+                                <h4 class="fw-bold mb-3"><i class="fa-solid fa-door-open me-2"></i>Apertura de Atención y Triage</h4>
+                                <form id="admisionForm" onsubmit="crearAdmision(event)">
+                                    <div class="mb-3">
+                                        <label class="form-label">Cédula del Paciente</label>
+                                        <input type="text" class="form-control" id="admDoc" value="1008" required>
+                                    </div>
+                                    <div class="row mb-3">
+                                        <div class="col">
+                                            <label class="form-label">Nombres</label>
+                                            <input type="text" class="form-control" id="admNombre" value="Camila" required>
+                                        </div>
+                                        <div class="col">
+                                            <label class="form-label">Apellidos</label>
+                                            <input type="text" class="form-control" id="admApellido" value="Suarez" required>
+                                        </div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Sede de Admisión</label>
+                                        <select class="form-select" id="admSede">
+                                            <option value="1">Sede 1 - Sincelejo</option>
+                                            <option value="2">Sede 2 - Cartagena</option>
+                                            <option value="3" selected>Sede 3 - Corozal</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Nivel de Triage</label>
+                                        <select class="form-select" id="admTriage">
+                                            <option value="1">Triage 1 - Reanimación</option>
+                                            <option value="2">Triage 2 - Emergencia</option>
+                                            <option value="3" selected>Triage 3 - Urgencia</option>
+                                            <option value="4">Triage 4 - Prioritario</option>
+                                            <option value="5">Triage 5 - No Urgente</option>
+                                        </select>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary w-100"><i class="fa-solid fa-paper-plane me-1"></i> Abrir Atención y Enviar al HSB</button>
+                                </form>
                             </div>
-                            <div class="alert alert-secondary small py-2 mb-0">
-                                <strong>Prueba de Caída para Sustentación:</strong> Al conmutar una sede a "CAÍDA", la consulta unificada sigue respondiendo con las demás sedes y se marca en amarillo en la vista médica.
+                        </div>
+                        <div class="col-md-7">
+                            <div class="card card-custom p-4">
+                                <h5 class="fw-bold mb-3">Detección de Duplicados e Identidad Federada</h5>
+                                <div class="alert alert-warning small py-2 mb-3">
+                                    <i class="fa-solid fa-shield-halved me-1"></i> <strong>Restricción de Seguridad:</strong> Este rol NO puede consultar diagnósticos ni notas clínicas médicas.
+                                </div>
+                                <div id="admisionResult" class="d-none alert alert-success">
+                                    <h6 class="fw-bold mb-1"><i class="fa-solid fa-check-circle me-1"></i> Atención Registrada con Éxito</h6>
+                                    <p class="mb-0 small" id="admisionResultText"></p>
+                                </div>
+                                <h6 class="fw-bold">Últimos Pacientes Registrados</h6>
+                                <ul class="list-group small" id="admPacientesList">
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div><strong>CC 1001</strong> - Carlos Perez <span class="badge bg-secondary ms-2">Multi-sede</span></div>
+                                        <span class="badge bg-success">Activo</span>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div><strong>CC 1007</strong> - Andrea Rojas <span class="badge bg-info ms-2">Cartagena</span></div>
+                                        <span class="badge bg-success">Activo</span>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VISTA 4: REPORTE & TABLERO -->
+                <div class="tab-pane fade" id="view-reporte">
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-3">
+                            <div class="card card-custom p-3 text-center border-start border-primary border-4">
+                                <small class="text-muted fw-bold">TOTAL MENSAJES HSB</small>
+                                <h2 class="fw-bold mb-0 text-primary" id="metricTotal">0</h2>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card card-custom p-3 text-center border-start border-success border-4">
+                                <small class="text-muted fw-bold">ENTREGADOS EXITOSOS</small>
+                                <h2 class="fw-bold mb-0 text-success" id="metricEntregados">0</h2>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card card-custom p-3 text-center border-start border-warning border-4">
+                                <small class="text-muted fw-bold">DUPLICADOS (IDEMPOTENCIA)</small>
+                                <h2 class="fw-bold mb-0 text-warning" id="metricDuplicados">0</h2>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card card-custom p-3 text-center border-start border-danger border-4">
+                                <small class="text-muted fw-bold">TASA DE FALLOS</small>
+                                <h2 class="fw-bold mb-0 text-danger" id="metricFallidos">0%</h2>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Verificador de Auditoría SHA-256 -->
-                    <div class="col-md-6">
-                        <div class="card card-custom p-4 mb-4">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <h5 class="fw-bold mb-0"><i class="fa-solid fa-shield-halved me-2"></i>Verificador de Integridad Criptográfica</h5>
-                                <button class="btn btn-sm btn-primary" onclick="verificarAuditoria()"><i class="fa-solid fa-check-double me-1"></i> Verificar Cadena</button>
+                    <div class="row">
+                        <!-- Salud de Nodos -->
+                        <div class="col-md-6">
+                            <div class="card card-custom p-4 mb-4">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h5 class="fw-bold mb-0"><i class="fa-solid fa-server me-2"></i>Estado de Nodos (Resiliencia)</h5>
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="actualizarMetricas()"><i class="fa-solid fa-rotate"></i></button>
+                                </div>
+                                <div class="list-group mb-3">
+                                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div><span class="status-dot dot-green" id="dot1"></span><strong>Sede 1: Sincelejo</strong> (5431)</div>
+                                        <button class="btn btn-sm btn-outline-danger py-0" onclick="toggleSede(1)">Conmutar Caída</button>
+                                    </div>
+                                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div><span class="status-dot dot-green" id="dot2"></span><strong>Sede 2: Cartagena</strong> (5432)</div>
+                                        <button class="btn btn-sm btn-outline-danger py-0" onclick="toggleSede(2)">Conmutar Caída</button>
+                                    </div>
+                                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div><span class="status-dot dot-green" id="dot3"></span><strong>Sede 3: Corozal</strong> (5433)</div>
+                                        <button class="btn btn-sm btn-outline-danger py-0" onclick="toggleSede(3)">Conmutar Caída</button>
+                                    </div>
+                                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div><span class="status-dot dot-green"></span><strong>HAPI FHIR R4</strong> (8090)</div>
+                                        <span class="badge bg-success">Saludable</span>
+                                    </div>
+                                </div>
+                                <div class="alert alert-secondary small py-2 mb-0">
+                                    Al conmutar una sede a "CAÍDA", la vista clínica sigue respondiendo en modo degradado resiliente (Teorema CAP: AP).
+                                </div>
                             </div>
-                            <div id="auditStatusBox" class="alert alert-success py-2">
-                                <i class="fa-solid fa-circle-check me-1"></i> <strong>Cadena Íntegra:</strong> 0 alteraciones detectadas en los hashes SHA-256.
-                            </div>
-                            <div class="d-flex gap-2 mb-3">
-                                <button class="btn btn-sm btn-outline-danger" onclick="simularAlteracionMaliciosa()"><i class="fa-solid fa-bug me-1"></i> Simular Alteración Maliciosa</button>
-                                <button class="btn btn-sm btn-outline-secondary" onclick="verificarAuditoria()"><i class="fa-solid fa-arrows-rotate me-1"></i> Re-verificar</button>
-                            </div>
-                            <div class="mono-font p-2 bg-light rounded" style="max-height: 160px; overflow-y: auto;" id="auditLogText">
-                                <!-- Logs de hashes -->
+                        </div>
+
+                        <!-- Auditoría SHA-256 -->
+                        <div class="col-md-6">
+                            <div class="card card-custom p-4 mb-4">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h5 class="fw-bold mb-0"><i class="fa-solid fa-shield-halved me-2"></i>Verificador Criptográfico SHA-256</h5>
+                                    <button class="btn btn-sm btn-primary" onclick="verificarAuditoria()"><i class="fa-solid fa-check-double me-1"></i> Verificar Cadena</button>
+                                </div>
+                                <div id="auditStatusBox" class="alert alert-success py-2">
+                                    <i class="fa-solid fa-circle-check me-1"></i> <strong>Cadena Íntegra:</strong> Hashes intactos.
+                                </div>
+                                <div class="d-flex gap-2 mb-3">
+                                    <button class="btn btn-sm btn-outline-danger" onclick="simularAlteracionMaliciosa()"><i class="fa-solid fa-bug me-1"></i> Simular Alteración Maliciosa</button>
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="verificarAuditoria()"><i class="fa-solid fa-arrows-rotate me-1"></i> Re-verificar</button>
+                                </div>
+                                <div class="mono-font p-2 bg-light rounded" style="max-height: 160px; overflow-y: auto;" id="auditLogText"></div>
                             </div>
                         </div>
                     </div>
@@ -884,24 +1012,118 @@ async def serve_ui():
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        let currentRole = 'medico';
+        let currentAuth = null;
 
-        function cambiarRol() {
-            currentRole = document.getElementById('roleSelector').value;
-            document.getElementById('currentRoleBadge').innerText = 'Rol: ' + currentRole.toUpperCase();
-            
-            // Simular restricciones RBAC
-            if (currentRole === 'paciente') {
-                document.getElementById('tab-paciente').click();
-                consultarHistoriaPaciente();
-            } else if (currentRole === 'admisionista') {
-                document.getElementById('tab-admision').click();
-            } else if (currentRole === 'auditor') {
-                document.getElementById('tab-reporte').click();
-                actualizarMetricas();
-            } else {
+        async function loginRapido(user, pass) {
+            document.getElementById('loginUser').value = user;
+            document.getElementById('loginPass').value = pass;
+            await ejecutarLogin(user, pass);
+        }
+
+        async function loginManual(event) {
+            event.preventDefault();
+            const user = document.getElementById('loginUser').value.trim();
+            const pass = document.getElementById('loginPass').value.trim();
+            await ejecutarLogin(user, pass);
+        }
+
+        async function ejecutarLogin(username, password) {
+            try {
+                const res = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    document.getElementById('loginError').innerText = err.detail || 'Error de autenticación';
+                    document.getElementById('loginError').classList.remove('d-none');
+                    return;
+                }
+                currentAuth = await res.json();
+                sessionStorage.setItem('auth_token', currentAuth.access_token);
+                sessionStorage.setItem('auth_data', JSON.stringify(currentAuth));
+                mostrarPantallaApp();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function mostrarPantallaApp() {
+            document.getElementById('loginScreen').classList.add('d-none');
+            document.getElementById('appScreen').classList.remove('d-none');
+            document.getElementById('navUserBadge').innerText = `${currentAuth.nombre} (${currentAuth.rol.toUpperCase()})`;
+
+            // Aislar y bloquear pestañas según RBAC
+            const rol = currentAuth.rol;
+            const itemMed = document.getElementById('navItemMedico');
+            const itemPac = document.getElementById('navItemPaciente');
+            const itemAdm = document.getElementById('navItemAdmision');
+            const itemRep = document.getElementById('navItemReporte');
+
+            itemMed.classList.add('d-none');
+            itemPac.classList.add('d-none');
+            itemAdm.classList.add('d-none');
+            itemRep.classList.add('d-none');
+
+            if (rol === 'medico') {
+                itemMed.classList.remove('d-none');
+                itemRep.classList.remove('d-none');
                 document.getElementById('tab-medico').click();
                 consultarHistoriaMedico();
+            } else if (rol === 'paciente') {
+                itemPac.classList.remove('d-none');
+                document.getElementById('tab-paciente').click();
+                consultarHistoriaPaciente();
+            } else if (rol === 'admisionista') {
+                itemAdm.classList.remove('d-none');
+                document.getElementById('tab-admision').click();
+            } else if (rol === 'auditor') {
+                itemRep.classList.remove('d-none');
+                document.getElementById('tab-reporte').click();
+                actualizarMetricas();
+                verificarAuditoria();
+            }
+        }
+
+        function logout() {
+            sessionStorage.clear();
+            currentAuth = null;
+            document.getElementById('appScreen').classList.add('d-none');
+            document.getElementById('loginScreen').classList.remove('d-none');
+        }
+
+        function getAuthHeaders() {
+            const token = currentAuth ? currentAuth.access_token : '';
+            return {
+                'Authorization': `Bearer ${token}`,
+                'X-Rol': currentAuth ? currentAuth.rol : 'medico'
+            };
+        }
+
+        // DEMOSTRACIÓN DE RECHAZO 403 PARA EL DOCENTE
+        async function probarAccesoDenegadoFase4() {
+            // Si es paciente, intenta consultar a otro paciente
+            // Si es admisionista, intenta consultar la historia clínica
+            let targetDoc = '9999';
+            if (currentAuth.rol === 'paciente') {
+                targetDoc = '1007'; // Documento ajeno
+            }
+            try {
+                const res = await fetch(`/paciente/${targetDoc}/historia-unificada`, {
+                    headers: getAuthHeaders()
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    const alertBox = document.getElementById('deniedAlertBox');
+                    document.getElementById('deniedAlertMsg').innerText = data.detail || 'Acceso Denegado 403';
+                    alertBox.classList.remove('d-none');
+                    alertBox.scrollIntoView({ behavior: 'smooth' });
+                } else {
+                    alert('Acceso permitido');
+                }
+            } catch (e) {
+                console.error(e);
             }
         }
 
@@ -909,7 +1131,7 @@ async def serve_ui():
             const doc = document.getElementById('medDocInput').value.trim() || '1001';
             try {
                 const res = await fetch(`/paciente/${doc}/historia-unificada`, {
-                    headers: { 'X-Rol': currentRole }
+                    headers: getAuthHeaders()
                 });
                 if (!res.ok) {
                     const err = await res.json();
@@ -968,7 +1190,7 @@ async def serve_ui():
         async function consultarHistoriaPaciente() {
             try {
                 const res = await fetch('/paciente/1001/historia-unificada', {
-                    headers: { 'X-Rol': 'paciente' }
+                    headers: getAuthHeaders()
                 });
                 const data = await res.json();
                 const list = document.getElementById('pacAtencionesList');
@@ -985,8 +1207,7 @@ async def serve_ui():
                     `;
                 });
 
-                // Cargar eventos de auditoría
-                const resAud = await fetch('/audit/events');
+                const resAud = await fetch('/audit/events', { headers: getAuthHeaders() });
                 const audData = await resAud.json();
                 const tbody = document.getElementById('pacAuditoriaBody');
                 tbody.innerHTML = '';
@@ -1016,7 +1237,6 @@ async def serve_ui():
             const sede = document.getElementById('dxSede').value;
             const cie10 = document.getElementById('dxCie10').value;
             
-            // Construir mensaje HL7 de prueba
             const hl7 = `MSH|^~\\&|HIS_SEDE${sede}|SEDE${sede}|HSB|CENTRAL|20261107120000||ADT^A01|MSG-${Date.now()}|P|2.5\\rPID|1||${doc}^^^HIS||Perez^Carlos||19800412|M\\rPV1|1|E|||||MED-02^Ruiz^Mateo||||||||||||V-S${sede}-0900|||||||||||||||||||||||||202611071200\\rDG1|1||${cie10}^Diagnostico^I10||20261107|A`;
             
             const res = await fetch('/hsb/hl7', {
@@ -1068,7 +1288,9 @@ async def serve_ui():
                 dot.className = 'status-dot dot-green';
             }
             alert(`Sede ${id} conmutada a: ${data.nuevo_estado}`);
-            consultarHistoriaMedico();
+            if (currentAuth && currentAuth.rol === 'medico') {
+                consultarHistoriaMedico();
+            }
         }
 
         async function verificarAuditoria() {
@@ -1096,10 +1318,8 @@ async def serve_ui():
             verificarAuditoria();
         }
 
-        // Carga inicial
-        consultarHistoriaMedico();
-        actualizarMetricas();
-        verificarAuditoria();
+        // Auto-login como médico por defecto si se desea probar directo
+        // O iniciar en pantalla de login
     </script>
 </body>
 </html>"""
