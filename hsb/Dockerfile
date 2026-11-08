@@ -2,10 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /workspace
 
+# Solo instalar curl para diagnósticos si es necesario
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    gcc \
-    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY hsb/requirements.txt /workspace/requirements.txt
