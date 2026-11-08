@@ -614,6 +614,119 @@ async def export_patient_bundle(documento: str):
     audit_ledger.add_event("PACIENTE_OR_AUDITOR", "PACIENTE", "DESCARGA_BUNDLE_FHIR", f"Patient/{documento}", "EXITOSO")
     return bundle
 
+
+# --------------------------------------------------------------------------
+# Gestión de Pacientes y Asignación Clínica (Flujo Asistencial Fase 4)
+# --------------------------------------------------------------------------
+@app.get("/api/pacientes")
+async def list_federated_patients():
+    """Lista dinámica de pacientes federados en las 3 sedes."""
+    pacientes_list = []
+    for doc, pat in active_patients.items():
+        atns = [e for e in clinical_encounters if e["documento"] == doc]
+        sedes = sorted(list({a["sede_nombre"] for a in atns}))
+        ultimo_enc = atns[0] if atns else {}
+        pacientes_list.append({
+            "documento": doc,
+            "tipo_documento": pat.get("tipo_documento", "CC"),
+            "nombre": pat.get("nombre", "Paciente"),
+            "apellido": pat.get("apellido", f"Doc-{doc}"),
+            "nacimiento": pat.get("nacimiento", "1990-01-01"),
+            "sexo": pat.get("sexo", "M"),
+            "fhir_patient_id": pat.get("fhir_patient_id") or f"pac-{doc}",
+            "sedes": sedes or ["Sincelejo"],
+            "total_atenciones": len(atns),
+            "medico_asignado": ultimo_enc.get("medico", "Dr. Mateo Ruiz"),
+            "triage": ultimo_enc.get("triage", "3"),
+            "motivo": ultimo_enc.get("motivo", "Atención asistencial"),
+            "fecha_admision": ultimo_enc.get("fecha", datetime.now().isoformat()),
+            "estado": ultimo_enc.get("estado", "En espera de atención médica")
+        })
+    return sorted(pacientes_list, key=lambda x: x["fecha_admision"], reverse=True)
+
+@app.post("/api/admision")
+async def registrar_admision_clinica(data: Dict[str, Any]):
+    """Registra la admisión de un paciente por el admisionista y lo asigna al médico."""
+    pid = str(data.get("pid", "")).strip()
+    nombre = str(data.get("nombre", "")).strip()
+    apellido = str(data.get("apellido", "")).strip()
+    nacimiento = str(data.get("nacimiento", "1990-01-01")).strip()
+    genero = str(data.get("genero", "M")).strip()
+    sede = int(data.get("sede", 2))
+    triage = str(data.get("triage", "3")).strip()
+    motivo = str(data.get("motivo", "")).strip() or "Admisión asistencial y valoración médica"
+    medico = str(data.get("medico", "Dr. Mateo Ruiz")).strip()
+    eps = str(data.get("eps", "EPS Sanitas")).strip()
+
+    if not pid or not nombre or not apellido:
+        raise HTTPException(status_code=400, detail="PID, Nombre y Apellido son obligatorios para la admisión.")
+
+    enc_id = f"ADM-S{sede}-{pid}-{int(time.time())}"
+    sede_nombre = "Sincelejo" if sede == 1 else ("Cartagena" if sede == 2 else "Corozal")
+
+    # 1. Normalizar a FHIR R4
+    pat = FHIRNormalizer.build_patient(pid, nombre, apellido, nacimiento, genero, str(sede))
+    enc = FHIRNormalizer.build_encounter(enc_id, pid, datetime.now().isoformat(), "URG", medico, sede_nombre)
+    bundle = FHIRNormalizer.build_transaction_bundle([pat, enc])
+    await send_to_hapi_with_retry(bundle)
+
+    # 2. Registrar en active_patients y clinical_encounters
+    active_patients[pid] = {
+        "documento": pid,
+        "tipo_documento": "CC",
+        "nombre": nombre,
+        "apellido": apellido,
+        "nacimiento": nacimiento,
+        "sexo": genero,
+        "fhir_patient_id": f"pac-{pid}"
+    }
+
+    nuevo_encuentro = {
+        "id_atencion": enc_id,
+        "documento": pid,
+        "sede": sede,
+        "sede_nombre": sede_nombre,
+        "fecha": datetime.now().isoformat(),
+        "clase": "URG",
+        "motivo": motivo,
+        "medico": medico,
+        "eps": eps,
+        "triage": triage,
+        "estado": "En espera de atención médica",
+        "diagnosticos": [],
+        "tecnologias": []
+    }
+    clinical_encounters.insert(0, nuevo_encuentro)
+
+    # 3. Persistir en PostgreSQL (RF4)
+    persist_atencion_sede(
+        sede_id=sede,
+        documento=pid,
+        nombre=nombre,
+        apellido=apellido,
+        nacimiento=nacimiento,
+        sexo=genero,
+        motivo=motivo,
+        medico=medico,
+        triage_cod=triage
+    )
+
+    # 4. Auditoría
+    audit_ledger.add_event("ADMISIONISTA", "ADMISIONISTA", "ADMITIR_PACIENTE", f"Patient/pac-{pid}", f"ASIGNADO A {medico} (Triage {triage})")
+    performance_metrics["total_recibidos"] += 1
+    performance_metrics["entregados"] += 1
+
+    return {
+        "estado": "admitido",
+        "id_atencion": enc_id,
+        "paciente": f"{nombre} {apellido}",
+        "documento": pid,
+        "sede": sede_nombre,
+        "medico_asignado": medico,
+        "triage": triage,
+        "fhir_bundle_creado": True
+    }
+
 # --------------------------------------------------------------------------
 # Auditoría y Trazabilidad Criptográfica (RF5)
 # --------------------------------------------------------------------------
@@ -956,6 +1069,24 @@ async def serve_ui():
 
                 <!-- SECCIÓN 1: CREAR REGISTRO MÉDICO (IDÉNTICO A LA CAPTURA) -->
                 <div id="secCrearRegistro">
+                    <!-- BANNER SALA DE ESPERA / PACIENTES ASIGNADOS AL MÉDICO -->
+                    <div id="bannerPacientesAsignados" class="card mb-3 border-0 shadow-sm" style="border-left: 4px solid #0d6efd !important; background-color: #f8faff;">
+                        <div class="card-body p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <h6 class="fw-bold mb-0 text-primary">
+                                    <i class="fa-solid fa-user-clock me-2"></i> Pacientes Asignados a su Consulta (Sala de Espera)
+                                </h6>
+                                <button type="button" class="btn btn-outline-primary btn-sm py-0 px-2" onclick="cargarPacientesAsignadosMedico()">
+                                    <i class="fa-solid fa-arrows-rotate me-1"></i> Actualizar
+                                </button>
+                            </div>
+                            <p class="small text-muted mb-2">Pacientes admitidos recientemente por Admisión y Triage pendientes de valoración o evolución clínica:</p>
+                            <div id="listaPacientesAsignados" class="table-responsive">
+                                <span class="text-muted small"><i class="fa-solid fa-spinner fa-spin me-1"></i> Cargando pacientes en espera...</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <h2 class="text-secondary fw-semibold text-center my-2" style="font-size: 1.7rem;">Crear Registro Medico</h2>
                     
                     <div id="registroResult" class="alert alert-success d-none mb-3">
@@ -1155,21 +1286,8 @@ async def serve_ui():
                                 <thead class="table-light">
                                     <tr><th>Documento</th><th>Nombre Completo</th><th>Sedes con Registro</th><th>Cobertura FHIR</th><th>Acción</th></tr>
                                 </thead>
-                                <tbody>
-                                    <tr>
-                                        <td><strong>CC 1001</strong></td>
-                                        <td>Carlos Perez</td>
-                                        <td><span class="badge bg-secondary">Sincelejo</span> <span class="badge bg-info">Cartagena</span> <span class="badge bg-warning text-dark">Corozal</span></td>
-                                        <td><span class="badge bg-success">FHIR R4 Activo</span></td>
-                                        <td><button class="btn btn-sm btn-outline-primary" onclick="cargarPacienteConsulta('1001')">Ver Historia</button></td>
-                                    </tr>
-                                    <tr>
-                                        <td><strong>CC 1007</strong></td>
-                                        <td>Andrea Rojas</td>
-                                        <td><span class="badge bg-info">Cartagena</span></td>
-                                        <td><span class="badge bg-success">FHIR R4 Activo</span></td>
-                                        <td><button class="btn btn-sm btn-outline-primary" onclick="cargarPacienteConsulta('1007')">Ver Historia</button></td>
-                                    </tr>
+                                <tbody id="tablaListadoPacientesBody">
+                                    <tr><td colspan="5" class="text-center text-muted small"><i class="fa-solid fa-spinner fa-spin me-1"></i> Cargando pacientes federados...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -1596,6 +1714,7 @@ async def serve_ui():
             } else if (sec === 'crear') {
                 document.getElementById('secCrearRegistro').classList.remove('d-none');
                 document.querySelector('#menuCrearHistorial a').classList.add('active');
+                cargarPacientesAsignadosMedico();
             } else if (sec === 'consultar') {
                 document.getElementById('secConsultarHistorial').classList.remove('d-none');
                 document.querySelector('#menuConsultarHistorial a').classList.add('active');
@@ -1603,6 +1722,7 @@ async def serve_ui():
             } else if (sec === 'listar') {
                 document.getElementById('secListarPacientes').classList.remove('d-none');
                 document.querySelector('#menuListarPacientes a').classList.add('active');
+                cargarListadoPacientes();
             } else if (sec === 'dashboard') {
                 document.getElementById('secDashboard').classList.remove('d-none');
                 document.querySelector('#menuDashboard a').classList.add('active');
@@ -1629,11 +1749,10 @@ async def serve_ui():
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i> Procesando admisión en HSB...';
 
             try {
-                const csvPayload = `${pid};${nombre} ${apellido};${genero};${nacimiento};R51;${new Date().toISOString().slice(0, 16)};${triage};MED-01`;
-                const res = await fetch(`/hsb/csv?sede=${sede}`, {
+                const res = await fetch('/api/admision', {
                     method: 'POST',
-                    body: csvPayload,
-                    headers: { 'Content-Type': 'text/plain' }
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pid, nombre, apellido, nacimiento, genero, sede: parseInt(sede), triage, motivo, medico, eps })
                 });
                 const data = await res.json();
                 
@@ -1641,10 +1760,11 @@ async def serve_ui():
                 box.classList.remove('d-none');
                 const sedeNombre = sede === '1' ? 'Sincelejo' : (sede === '2' ? 'Cartagena' : 'Corozal');
                 document.getElementById('admisionResultText').innerHTML = `
-                    <strong>Paciente Admitido:</strong> ${nombre} ${apellido} (PID: <code>${pid}</code>)<br>
-                    <strong>Sede:</strong> Sede ${sede} (${sedeNombre}) • <strong>Triage:</strong> Nivel ${triage} • <strong>EPS:</strong> ${eps}<br>
-                    <strong>Médico:</strong> ${medico} • <strong>Motivo:</strong> ${motivo}<br>
-                    <strong>Normalización:</strong> Generado recurso FHIR <code>Patient/pac-${pid}</code> y <code>Encounter</code> en el HSB.
+                    <div class="d-flex align-items-center mb-1"><i class="fa-solid fa-circle-check text-success fs-5 me-2"></i> <strong>¡Paciente Admitido y Asignado con Éxito!</strong></div>
+                    <strong>Paciente:</strong> ${nombre} ${apellido} (Documento: <code>${pid}</code>)<br>
+                    <strong>Médico Asignado:</strong> <span class="badge bg-primary">${medico}</span> • <strong>Triage:</strong> Nivel ${triage} • <strong>Sede:</strong> Sede ${sede} (${sedeNombre})<br>
+                    <strong>Motivo:</strong> ${motivo}<br>
+                    <small class="text-muted"><i class="fa-solid fa-network-wired me-1"></i> Notificado a la sala de espera del médico, persistido en PostgreSQL y normalizado en FHIR R4.</small>
                 `;
                 box.scrollIntoView({ behavior: 'smooth' });
                 
