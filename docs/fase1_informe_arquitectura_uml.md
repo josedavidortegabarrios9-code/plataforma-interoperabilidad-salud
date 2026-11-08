@@ -8,8 +8,8 @@
 *Plataforma Distribuida de Interoperabilidad Clínica para Unificación de Historias Clínicas en Redes Federadas*
 
 **Autores:**  
-- Estudiante 1 (Ingeniería de Sistemas)  
-- Estudiante 2 (Ingeniería de Sistemas)  
+- **Jose Ortega Barrios** (Ingeniería de Sistemas)  
+- **Raul Peralta Perez** (Ingeniería de Sistemas)  
 *Docente:* Ing. Jaider Reyes Herazo  
 *Asignatura:* Sistemas Distribuidos — Universidad Antonio José de Sucre (UAJS)
 

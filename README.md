@@ -3,8 +3,10 @@
 **Asignatura:** Sistemas Distribuidos  
 **Institución:** Universidad Antonio José de Sucre (UAJS)  
 **Docente:** Ing. Jaider Reyes Herazo  
-**Equipo:** Equipo de Trabajo - Sistemas Distribuidos  
-**Versión:** `v1.0-alpha` (Fase 1 completada)
+**Equipo de Estudiantes:**  
+- **Jose Ortega Barrios**  
+- **Raul Peralta Perez**  
+**Versión:** `v1.0-alpha`
 
 ---
 
