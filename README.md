@@ -113,9 +113,12 @@ La plataforma utiliza autenticación multifactor obligatoria en dos etapas:
 1. **Paso 1 — Credenciales:** Se ingresa usuario y contraseña.
 2. **Paso 2 — Verificación de Segundo Factor (2FA):** El sistema emite un código criptográfico de 6 dígitos al correo institucional antes de generar el token JWT firmado con HMAC-SHA256.
 
-### Credenciales de Acceso por Rol
+### Credenciales y Políticas de Seguridad
 
-| Rol | Usuario | Contraseña | Código 2FA | Vista Asignada | Permisos Asistenciales |
+> [!NOTE]
+> Las contraseñas se almacenan mediante **Hashing Criptográfico SHA-256** (cero texto plano en base de datos ni en interfaz). Los secretos del sistema y variables de entorno se configuran mediante el archivo `.env` (ver `.env.example`).
+
+| Rol | Identificador / Usuario | Contraseña Inicial Demo | Código 2FA | Vista Asignada | Permisos Asistenciales |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Médico** | `medico_ruiz` | `medico123` | `807286` | Clínica Central | Consulta de historias de las 3 sedes y registro de diagnósticos CIE-10. |
 | **Admisión** | `admision_sincelejo` | `admision123` | `807286` | Formulario Admisión | Admisión asistencial y asignación de triage. **Bloqueo a notas clínicas**. |

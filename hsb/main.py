@@ -24,7 +24,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from hsb.parser import HL7Parser, CSVParser
 from fhir.normalizer import FHIRNormalizer
 from hsb.audit import audit_ledger
-from hsb.auth import JWTManager, require_role, USUARIOS_PRUEBA, ACTIVE_2FA_CODES
+from hsb.database import fetch_atenciones_sede, persist_atencion_sede
+from hsb.auth import JWTManager, require_role, USUARIOS_PRUEBA, ACTIVE_2FA_CODES, verify_password
 
 app = FastAPI(
     title="Health Service Bus (HSB) - Plataforma de Interoperabilidad Clínica",
@@ -273,6 +274,25 @@ async def ingest_hl7(request: Request):
     }
     clinical_encounters.append(new_enc)
 
+    # Persistencia en PostgreSQL de la sede destino (RF4 - BD Distribuidas con Volúmenes Docker)
+    obs_info = data.get("observacion") or {}
+    persist_atencion_sede(
+        sede_id=data["sede"],
+        documento=doc,
+        nombre=data["nombre"],
+        apellido=data["apellido"],
+        nacimiento=data["fecha_nacimiento"],
+        sexo=data["sexo"],
+        motivo="Atención médica integrada vía HSB",
+        medico=data["medico"],
+        cie10_cod=data.get("cod_cie10"),
+        cie10_desc=data.get("desc_cie10"),
+        loinc_cod=obs_info.get("cod_loinc"),
+        loinc_desc=obs_info.get("desc_loinc"),
+        loinc_val=obs_info.get("valor"),
+        loinc_unit=obs_info.get("unidad")
+    )
+
     # Registrar en memoria de idempotencia
     processed_messages[msg_id] = {"timestamp": time.time(), "doc": doc, "sede": data["sede"]}
     processed_messages[payload_hash] = processed_messages[msg_id]
@@ -349,6 +369,21 @@ async def ingest_csv(request: Request, sede: int = Query(3, description="Número
             "sexo": data["sexo"],
             "fhir_patient_id": f"pac-{doc}"
         }
+        # Persistir en PostgreSQL de la sede (RF4)
+        persist_atencion_sede(
+            sede_id=sede,
+            documento=doc,
+            nombre=data["nombre"],
+            apellido=data["apellido"],
+            nacimiento=data["fecha_nacimiento"],
+            sexo=data["sexo"],
+            motivo="Atención primaria comunitaria",
+            medico=data["medico"],
+            triage_cod=data.get("triage"),
+            cie10_cod=data.get("cod_cie10"),
+            cie10_desc=data.get("desc_cie10")
+        )
+
         clinical_encounters.append({
             "id_atencion": data["encounter_id"],
             "documento": doc,
@@ -393,7 +428,7 @@ async def login(credentials: Dict[str, Any]):
     password = str(credentials.get("password", "")).strip()
 
     user = USUARIOS_PRUEBA.get(username)
-    if not user or user["password"] != password:
+    if not user or not verify_password(password, user["password_hash"]):
         audit_ledger.add_event(username or "ANONIMO", "DESCONOCIDO", "LOGIN_FALLIDO", "SISTEMA_AUTH", "DENEGADO")
         raise HTTPException(status_code=401, detail="Credenciales incorrectas (Usuario o contraseña no válidos)")
 
@@ -511,19 +546,32 @@ async def get_historia_unificada(
     # Atenciones del paciente cruzadas entre las 3 sedes
     atenciones_paciente = [e for e in clinical_encounters if e["documento"] == documento]
 
-    # Simulación de verificación de salud de los nodos de sede
+    # Consulta Distribuida Real a los 3 Nodos PostgreSQL (RF4) con Tolerancia a Fallos
     sedes_activas = []
     sedes_inactivas = []
+    atenciones_bd = []
+
     for s_id, s_name in [(1, "Sincelejo"), (2, "Cartagena"), (3, "Corozal")]:
-        # En caso de simulación de caída controlada
+        activo, pac_bd, atns_bd = fetch_atenciones_sede(s_id, documento)
         if os.getenv(f"SEDE{s_id}_DOWN", "false").lower() == "true":
             sedes_inactivas.append({"id_sede": s_id, "nombre": s_name, "estado": "CAIDA_NO_DISPONIBLE"})
+        elif activo:
+            sedes_activas.append({"id_sede": s_id, "nombre": s_name, "estado": "OPERATIVA"})
+            if pac_bd and not paciente.get("nombre"):
+                paciente.update(pac_bd)
+            atenciones_bd.extend(atns_bd)
         else:
             sedes_activas.append({"id_sede": s_id, "nombre": s_name, "estado": "OPERATIVA"})
 
-    # Filtrar solo atenciones de sedes activas
+    # Unificar atenciones evitando duplicados entre PostgreSQL y memoria
     sedes_inactivas_ids = [s["id_sede"] for s in sedes_inactivas]
-    atenciones_visibles = [a for a in atenciones_paciente if a["sede"] not in sedes_inactivas_ids]
+    ids_existentes = {a["id_atencion"] for a in atenciones_bd}
+    for a_mem in atenciones_paciente:
+        if a_mem["sede"] not in sedes_inactivas_ids and a_mem["id_atencion"] not in ids_existentes:
+            atenciones_bd.append(a_mem)
+            ids_existentes.add(a_mem["id_atencion"])
+
+    atenciones_visibles = [a for a in atenciones_bd if a["sede"] not in sedes_inactivas_ids]
 
     # Auditoría del acceso a la historia clínica
     audit_ledger.add_event(f"USUARIO_{rol.upper()}", rol.upper(), "CONSULTA_HISTORIA_UNIFICADA", f"Patient/{documento}", "PERMITIDO")
@@ -799,44 +847,6 @@ async def serve_ui():
                 </button>
             </form>
 
-            <div class="mt-4 pt-3 border-top">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <span class="small text-muted fw-semibold"><i class="fa-solid fa-circle-info me-1"></i> Credenciales de Prueba (Fase 4):</span>
-                </div>
-                <div class="table-responsive">
-                    <table class="table table-sm table-bordered small text-center mb-1" style="font-size: 0.75rem;">
-                        <thead class="table-light">
-                            <tr><th>Rol</th><th>Usuario</th><th>Contraseña</th><th>Acción</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td><span class="badge bg-primary">Médico</span></td>
-                                <td><code>medico_ruiz</code></td>
-                                <td><code>medico123</code></td>
-                                <td><button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="cargarCredenciales('medico_ruiz','medico123')">Rellenar</button></td>
-                            </tr>
-                            <tr>
-                                <td><span class="badge bg-warning text-dark">Admisión</span></td>
-                                <td><code>admision_sincelejo</code></td>
-                                <td><code>admision123</code></td>
-                                <td><button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="cargarCredenciales('admision_sincelejo','admision123')">Rellenar</button></td>
-                            </tr>
-                            <tr>
-                                <td><span class="badge bg-info text-dark">Auditor</span></td>
-                                <td><code>auditor_calidad</code></td>
-                                <td><code>auditor123</code></td>
-                                <td><button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="cargarCredenciales('auditor_calidad','auditor123')">Rellenar</button></td>
-                            </tr>
-                            <tr>
-                                <td><span class="badge bg-success">Paciente</span></td>
-                                <td><code>paciente1001</code></td>
-                                <td><code>paciente123</code></td>
-                                <td><button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="cargarCredenciales('paciente1001','paciente123')">Rellenar</button></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
         </div>
     </div>
 

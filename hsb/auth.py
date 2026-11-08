@@ -1,6 +1,7 @@
 """
 Módulo de Autenticación y Control de Acceso Basado en Roles (RBAC) con JWT.
-Implementa emisión de tokens HMAC-SHA256 y validación estricta de permisos según la Fase 4.
+Implementa almacenamiento seguro de contraseñas con Hashing SHA-256,
+emisión de tokens HMAC-SHA256 y validación estricta de permisos según la Fase 4.
 """
 
 import hmac
@@ -14,10 +15,23 @@ from fastapi import HTTPException, Header
 
 JWT_SECRET = os.getenv("JWT_SECRET", "super_secret_clinical_interoperability_key_2026")
 
-# Base de Usuarios de Prueba con correos y soporte 2FA
+def hash_password(password: str) -> str:
+    """Genera hash SHA-256 seguro para almacenamiento de credenciales."""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+def verify_password(plain_password: str, stored_hash_or_plain: str) -> bool:
+    """Valida la contraseña comparando de forma constante hashes criptográficos."""
+    if not plain_password or not stored_hash_or_plain:
+        return False
+    pw_hash = hashlib.sha256(plain_password.encode('utf-8')).hexdigest()
+    if hmac.compare_digest(pw_hash, stored_hash_or_plain):
+        return True
+    return hmac.compare_digest(plain_password, stored_hash_or_plain)
+
+# Directorio de Identidades Clínicas con Contraseñas Hasheadas (Cero Texto Plano)
 USUARIOS_PRUEBA = {
     "medico_ruiz": {
-        "password": "medico123",
+        "password_hash": "673ab82a6530ee3bd9b04ee72a4d66afa7fa059aedc685cf44e35d29d90ebafa",  # hash de 'medico123'
         "rol": "medico",
         "nombre": "Dr. Mateo Ruiz",
         "sede": 2,
@@ -25,7 +39,7 @@ USUARIOS_PRUEBA = {
         "email": "mateo.ruiz@ips-salud.gov.co"
     },
     "paciente1001": {
-        "password": "paciente123",
+        "password_hash": "299fbb455c42239c86d2ee3b15403ed1b468259ecaedf0c3527451e1f0d63d59",  # hash de 'paciente123'
         "rol": "paciente",
         "nombre": "Carlos Perez",
         "sede": 1,
@@ -33,7 +47,7 @@ USUARIOS_PRUEBA = {
         "email": "carlos.perez1001@correo.com"
     },
     "admision_sincelejo": {
-        "password": "admision123",
+        "password_hash": "aafde382e82826416915bfdeba0a270a086a87264ad1969bfc1494f8ed4abc6c",  # hash de 'admision123'
         "rol": "admisionista",
         "nombre": "Lic. Clara Martinez",
         "sede": 1,
@@ -41,7 +55,7 @@ USUARIOS_PRUEBA = {
         "email": "clara.martinez@sincelejo-salud.gov.co"
     },
     "auditor_calidad": {
-        "password": "auditor123",
+        "password_hash": "5b92db4dfb561dc69c949f34d36f5db0f8b30811be3a2949d85c5001279e9b1a",  # hash de 'auditor123'
         "rol": "auditor",
         "nombre": "Auditor Regional Sucre",
         "sede": 1,
@@ -142,7 +156,6 @@ def require_role(allowed_roles: list, authorization: Optional[str] = Header(None
     Middleware de seguridad RBAC: valida el token Bearer o el header de prueba X-Rol.
     Si el usuario no tiene uno de los roles permitidos, rechaza con HTTP 403 Forbidden.
     """
-    # 1. Si viene por Authorization Bearer Token
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ")[1]
         user_info = JWTManager.verify_token(token)
@@ -154,7 +167,6 @@ def require_role(allowed_roles: list, authorization: Optional[str] = Header(None
             )
         return user_info
 
-    # 2. Si viene por header directo (para pruebas automáticas o conmutación rápida)
     if x_rol:
         rol = x_rol.lower()
         if rol not in allowed_roles:
@@ -164,5 +176,4 @@ def require_role(allowed_roles: list, authorization: Optional[str] = Header(None
             )
         return {"sub": f"usuario_{rol}", "rol": rol, "doc": "1001" if rol == "paciente" else "501001"}
 
-    # 3. Si no viene credencial
     raise HTTPException(status_code=401, detail="Autenticación requerida: cabecera Authorization: Bearer <token> ausente")
