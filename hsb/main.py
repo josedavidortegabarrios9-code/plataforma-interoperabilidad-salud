@@ -877,8 +877,13 @@ async def serve_ui():
                 <i class="fa-solid fa-gauge-high me-2"></i> Dashboard
             </div>
             
-            <div class="sidebar-heading">OPCIONES</div>
+                        <div class="sidebar-heading">OPCIONES</div>
             <ul class="sidebar-menu">
+                <li id="menuAdmision">
+                    <a onclick="navegarSeccion('admision')">
+                        <i class="fa-solid fa-hospital-user me-2"></i> Formulario de Admisión
+                    </a>
+                </li>
                 <li id="menuCrearHistorial">
                     <a class="active" onclick="navegarSeccion('crear')">
                         <i class="fa-solid fa-plus me-2"></i> Crear historial medico
@@ -1236,6 +1241,212 @@ async def serve_ui():
                     </div>
                 </div>
 
+            
+                <!-- SECCIÓN ADMISIÓN DE PACIENTES (EXCLUSIVA PARA ADMISIONISTA) -->
+                <div id="secAdmisionPaciente" class="d-none">
+                    <div class="container py-2" style="max-width: 820px;">
+                        <h3 class="fw-bold text-center mb-4">Formulario de Admisión de Paciente</h3>
+
+                        <div class="alert alert-warning small py-2 mb-3 d-flex justify-content-between align-items-center">
+                            <div>
+                                <i class="fa-solid fa-shield-halved me-2"></i><strong>Restricción de Rol Admisión (Fase 4):</strong> Solo apertura de atenciones y triage asistencial. Acceso denegado a notas clínicas y diagnósticos.
+                            </div>
+                            <span class="badge bg-warning text-dark">RBAC Activo</span>
+                        </div>
+
+                        <div id="admisionResult" class="alert alert-success alert-dismissible fade show d-none mb-3" role="alert">
+                            <h6 class="fw-bold mb-1"><i class="fa-solid fa-circle-check me-2"></i>Admisión Registrada en el HSB</h6>
+                            <p class="mb-0 small" id="admisionResultText"></p>
+                            <button type="button" class="btn-close" onclick="document.getElementById('admisionResult').classList.add('d-none')"></button>
+                        </div>
+
+                        <form id="formAdmisionOficial" onsubmit="enviarFormularioAdmision(event)">
+                            <div class="accordion mb-4 shadow-sm" id="accordionAdmision">
+                                
+                                <!-- 1. Información del Paciente -->
+                                <div class="accordion-item border-0 mb-2 rounded-2 overflow-hidden">
+                                    <h2 class="accordion-header" id="headingOne">
+                                        <button class="accordion-button fw-semibold" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne" aria-expanded="true" aria-controls="collapseOne" style="background-color: #cfe2ff; color: #084298;">
+                                            Información del Paciente
+                                        </button>
+                                    </h2>
+                                    <div id="collapseOne" class="accordion-collapse collapse show" aria-labelledby="headingOne" data-bs-parent="#accordionAdmision">
+                                        <div class="accordion-body bg-white p-4">
+                                            <div class="mb-3">
+                                                <label class="form-label small fw-semibold">ID del Paciente (PID)</label>
+                                                <input type="text" class="form-control" id="admPid" placeholder="Ingrese el ID del paciente" required>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label small fw-semibold">Nombre del Paciente</label>
+                                                <input type="text" class="form-control" id="admNombre" placeholder="Nombre" required>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label small fw-semibold">Apellido del Paciente</label>
+                                                <input type="text" class="form-control" id="admApellido" placeholder="Apellido" required>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label small fw-semibold">Fecha de Nacimiento</label>
+                                                <input type="date" class="form-control" id="admNacimiento" value="1995-06-15" required>
+                                            </div>
+                                            <div class="mb-2">
+                                                <label class="form-label small fw-semibold">Género</label>
+                                                <select class="form-select" id="admGenero" required>
+                                                    <option value="" disabled selected>Seleccione un género</option>
+                                                    <option value="M">Masculino</option>
+                                                    <option value="F">Femenino</option>
+                                                    <option value="O">Otro</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 2. Información de Contacto -->
+                                <div class="accordion-item border-0 mb-2 rounded-2 overflow-hidden">
+                                    <h2 class="accordion-header" id="headingTwo">
+                                        <button class="accordion-button collapsed fw-semibold" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo" style="background-color: #cfe2ff; color: #084298;">
+                                            Información de Contacto
+                                        </button>
+                                    </h2>
+                                    <div id="collapseTwo" class="accordion-collapse collapse" aria-labelledby="headingTwo" data-bs-parent="#accordionAdmision">
+                                        <div class="accordion-body bg-white p-4">
+                                            <div class="mb-3">
+                                                <label class="form-label small fw-semibold">Teléfono Celular / Fijo</label>
+                                                <input type="tel" class="form-control" id="admTelefono" placeholder="Ej: 3001234567" value="3004567890">
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label small fw-semibold">Dirección de Residencia</label>
+                                                <input type="text" class="form-control" id="admDireccion" placeholder="Calle / Carrera / Barrio" value="Calle 15 # 24-50">
+                                            </div>
+                                            <div class="mb-2">
+                                                <label class="form-label small fw-semibold">Correo Electrónico</label>
+                                                <input type="email" class="form-control" id="admEmail" placeholder="correo@ejemplo.com" value="paciente@correo.com">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 3. Contacto de Emergencia -->
+                                <div class="accordion-item border-0 mb-2 rounded-2 overflow-hidden">
+                                    <h2 class="accordion-header" id="headingThree">
+                                        <button class="accordion-button collapsed fw-semibold" type="button" data-bs-toggle="collapse" data-bs-target="#collapseThree" aria-expanded="false" aria-controls="collapseThree" style="background-color: #cfe2ff; color: #084298;">
+                                            Contacto de Emergencia
+                                        </button>
+                                    </h2>
+                                    <div id="collapseThree" class="accordion-collapse collapse" aria-labelledby="headingThree" data-bs-parent="#accordionAdmision">
+                                        <div class="accordion-body bg-white p-4">
+                                            <div class="mb-3">
+                                                <label class="form-label small fw-semibold">Nombre del Contacto</label>
+                                                <input type="text" class="form-control" id="admContactoNombre" placeholder="Familiar o acompañante" value="Maria Perez">
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label small fw-semibold">Teléfono de Emergencia</label>
+                                                <input type="tel" class="form-control" id="admContactoTel" placeholder="Número telefónico" value="3119876543">
+                                            </div>
+                                            <div class="mb-2">
+                                                <label class="form-label small fw-semibold">Parentesco</label>
+                                                <select class="form-select" id="admContactoParentesco">
+                                                    <option value="Madre/Padre">Madre / Padre</option>
+                                                    <option value="Cónyuge" selected>Cónyuge</option>
+                                                    <option value="Hijo/a">Hijo / a</option>
+                                                    <option value="Hermano/a">Hermano / a</option>
+                                                    <option value="Otro">Otro</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 4. Fecha de Admisión y Aseguradora -->
+                                <div class="accordion-item border-0 mb-2 rounded-2 overflow-hidden">
+                                    <h2 class="accordion-header" id="headingFour">
+                                        <button class="accordion-button collapsed fw-semibold" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFour" aria-expanded="false" aria-controls="collapseFour" style="background-color: #cfe2ff; color: #084298;">
+                                            Fecha de Admisión y Aseguradora
+                                        </button>
+                                    </h2>
+                                    <div id="collapseFour" class="accordion-collapse collapse" aria-labelledby="headingFour" data-bs-parent="#accordionAdmision">
+                                        <div class="accordion-body bg-white p-4">
+                                            <div class="row mb-3">
+                                                <div class="col-md-6">
+                                                    <label class="form-label small fw-semibold">Sede de Admisión</label>
+                                                    <select class="form-select" id="admSede" required>
+                                                        <option value="1">Sede 1 - Sincelejo (Laboratorio / Consulta)</option>
+                                                        <option value="2" selected>Sede 2 - Cartagena (Urgencias / Hospitalización)</option>
+                                                        <option value="3">Sede 3 - Corozal (Consulta Comunitaria)</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label small fw-semibold">Nivel de Triage</label>
+                                                    <select class="form-select" id="admTriage" required>
+                                                        <option value="1">Triage 1 - Resucitación (Rojo)</option>
+                                                        <option value="2">Triage 2 - Emergencia (Naranja)</option>
+                                                        <option value="3" selected>Triage 3 - Urgencia (Amarillo)</option>
+                                                        <option value="4">Triage 4 - Prioritario (Verde)</option>
+                                                        <option value="5">Triage 5 - No Urgente (Azul)</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div class="row mb-2">
+                                                <div class="col-md-6">
+                                                    <label class="form-label small fw-semibold">Aseguradora / EPS</label>
+                                                    <select class="form-select" id="admEps">
+                                                        <option value="EPS Sanitas" selected>EPS Sanitas</option>
+                                                        <option value="Nueva EPS">Nueva EPS</option>
+                                                        <option value="SURA">EPS Sura</option>
+                                                        <option value="Salud Total">Salud Total</option>
+                                                        <option value="Coosalud">Coosalud</option>
+                                                        <option value="Particular">Particular / No asegurado</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label small fw-semibold">Motivo de Consulta / Ingreso</label>
+                                                    <input type="text" class="form-control" id="admMotivo" placeholder="Ej: Dolor abdominal agudo" value="Ingreso para valoración médica general">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 5. Información del Médico -->
+                                <div class="accordion-item border-0 mb-2 rounded-2 overflow-hidden">
+                                    <h2 class="accordion-header" id="headingFive">
+                                        <button class="accordion-button collapsed fw-semibold" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFive" aria-expanded="false" aria-controls="collapseFive" style="background-color: #cfe2ff; color: #084298;">
+                                            Informacion del Medico
+                                        </button>
+                                    </h2>
+                                    <div id="collapseFive" class="accordion-collapse collapse" aria-labelledby="headingFive" data-bs-parent="#accordionAdmision">
+                                        <div class="accordion-body bg-white p-4">
+                                            <div class="row mb-2">
+                                                <div class="col-md-6">
+                                                    <label class="form-label small fw-semibold">Médico Asignado</label>
+                                                    <select class="form-select" id="admMedico">
+                                                        <option value="Dr. Mateo Ruiz" selected>Dr. Mateo Ruiz (Urgencias)</option>
+                                                        <option value="Dra. Laura Vega">Dra. Laura Vega (Laboratorio/Clínica)</option>
+                                                        <option value="Dra. Andrea Soler">Dra. Andrea Soler (Consulta Externa)</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label small fw-semibold">Servicio / Pabellón</label>
+                                                    <select class="form-select" id="admServicio">
+                                                        <option value="URG" selected>Servicio de Urgencias</option>
+                                                        <option value="AMB">Consulta Externa Ambulatoria</option>
+                                                        <option value="HOSP">Hospitalización</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+
+                            <button type="submit" id="btnEnviarAdmision" class="btn btn-primary w-100 py-3 fw-bold fs-6 shadow-sm">
+                                <i class="fa-solid fa-paper-plane me-2"></i> Enviar Formulario
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
             </main>
         </div>
     </div>
@@ -1337,21 +1548,42 @@ async def serve_ui():
             }
         }
 
-        function aplicarRBAC() {
+                function aplicarRBAC() {
             const rol = currentAuth.rol;
-            // Si es admisionista, no ve dashboard de infraestructura ni auditoría
+            
+            // Ocultar todas las opciones del menú primero
+            document.getElementById('menuAdmision').classList.add('d-none');
+            document.getElementById('menuCrearHistorial').classList.add('d-none');
+            document.getElementById('menuConsultarHistorial').classList.add('d-none');
+            document.getElementById('menuListarPacientes').classList.add('d-none');
+            document.getElementById('menuDashboard').classList.add('d-none');
+
             if (rol === 'admisionista') {
-                document.getElementById('menuDashboard').classList.add('d-none');
+                // Admisionista solo ve el Formulario de Admisión de Paciente y Listar Pacientes
+                document.getElementById('menuAdmision').classList.remove('d-none');
+                document.getElementById('menuListarPacientes').classList.remove('d-none');
+                navegarSeccion('admision');
+            } else if (rol === 'medico') {
+                // Médico ve Crear Historial Médico, Consultar Historial y Listar Pacientes
+                document.getElementById('menuCrearHistorial').classList.remove('d-none');
+                document.getElementById('menuConsultarHistorial').classList.remove('d-none');
+                document.getElementById('menuListarPacientes').classList.remove('d-none');
                 navegarSeccion('crear');
             } else if (rol === 'auditor') {
+                // Auditor ve Estado de Nodos y Auditoría
+                document.getElementById('menuDashboard').classList.remove('d-none');
                 navegarSeccion('dashboard');
                 verificarAuditoria();
-            } else {
-                navegarSeccion('crear');
+            } else if (rol === 'paciente') {
+                // Paciente solo ve la consulta de su propio historial
+                document.getElementById('menuConsultarHistorial').classList.remove('d-none');
+                document.getElementById('searchDocInput').value = currentAuth.documento || '1001';
+                navegarSeccion('consultar');
             }
         }
 
         function navegarSeccion(sec) {
+            document.getElementById('secAdmisionPaciente').classList.add('d-none');
             document.getElementById('secCrearRegistro').classList.add('d-none');
             document.getElementById('secConsultarHistorial').classList.add('d-none');
             document.getElementById('secListarPacientes').classList.add('d-none');
@@ -1359,7 +1591,10 @@ async def serve_ui():
 
             document.querySelectorAll('.sidebar-menu a').forEach(el => el.classList.remove('active'));
 
-            if (sec === 'crear') {
+            if (sec === 'admision') {
+                document.getElementById('secAdmisionPaciente').classList.remove('d-none');
+                document.querySelector('#menuAdmision a').classList.add('active');
+            } else if (sec === 'crear') {
                 document.getElementById('secCrearRegistro').classList.remove('d-none');
                 document.querySelector('#menuCrearHistorial a').classList.add('active');
             } else if (sec === 'consultar') {
@@ -1374,6 +1609,55 @@ async def serve_ui():
                 document.querySelector('#menuDashboard a').classList.add('active');
                 actualizarMetricas();
                 verificarAuditoria();
+            }
+        }
+
+                async function enviarFormularioAdmision(event) {
+            event.preventDefault();
+            const pid = document.getElementById('admPid').value.trim();
+            const nombre = document.getElementById('admNombre').value.trim();
+            const apellido = document.getElementById('admApellido').value.trim();
+            const nacimiento = document.getElementById('admNacimiento').value;
+            const genero = document.getElementById('admGenero').value || 'M';
+            const sede = document.getElementById('admSede').value;
+            const triage = document.getElementById('admTriage').value;
+            const motivo = document.getElementById('admMotivo').value.trim() || 'Admisión asistencial';
+            const medico = document.getElementById('admMedico').value;
+            const eps = document.getElementById('admEps').value;
+
+            const btn = document.getElementById('btnEnviarAdmision');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i> Procesando admisión en HSB...';
+
+            try {
+                const csvPayload = `${pid};${nombre} ${apellido};${genero};${nacimiento};R51;${new Date().toISOString().slice(0, 16)};${triage};MED-01`;
+                const res = await fetch(`/hsb/csv?sede=${sede}`, {
+                    method: 'POST',
+                    body: csvPayload,
+                    headers: { 'Content-Type': 'text/plain' }
+                });
+                const data = await res.json();
+                
+                const box = document.getElementById('admisionResult');
+                box.classList.remove('d-none');
+                const sedeNombre = sede === '1' ? 'Sincelejo' : (sede === '2' ? 'Cartagena' : 'Corozal');
+                document.getElementById('admisionResultText').innerHTML = `
+                    <strong>Paciente Admitido:</strong> ${nombre} ${apellido} (PID: <code>${pid}</code>)<br>
+                    <strong>Sede:</strong> Sede ${sede} (${sedeNombre}) • <strong>Triage:</strong> Nivel ${triage} • <strong>EPS:</strong> ${eps}<br>
+                    <strong>Médico:</strong> ${medico} • <strong>Motivo:</strong> ${motivo}<br>
+                    <strong>Normalización:</strong> Generado recurso FHIR <code>Patient/pac-${pid}</code> y <code>Encounter</code> en el HSB.
+                `;
+                box.scrollIntoView({ behavior: 'smooth' });
+                
+                document.getElementById('admPid').value = '';
+                document.getElementById('admNombre').value = '';
+                document.getElementById('admApellido').value = '';
+            } catch (e) {
+                alert('Error al enviar la admisión');
+                console.error(e);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-paper-plane me-2"></i> Enviar Formulario';
             }
         }
 
@@ -1411,7 +1695,10 @@ async def serve_ui():
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i> Integrando en HSB y creando Bundle FHIR...';
 
             try {
-                const hl7 = `MSH|^~\&|HIS_SEDE${sede}|SEDE${sede}|HSB|CENTRAL|20261108120000||ADT^A01|MSG-${Date.now()}|P|2.5PID|1||${doc}^^^HIS||${apellido}^${nombre}||${nac.replace(/-/g,'')}|${sexo}PV1|1|E|||||MED-02^Ruiz^Mateo||||||||||||V-S${sede}-0900|||||||||||||||||||||||||202611081200DG1|1||${cie10}^Diagnostico^I10||20261108|A`;
+                const hl7 = `MSH|^~\&|HIS_SEDE${sede}|SEDE${sede}|HSB|CENTRAL|20261108120000||ADT^A01|MSG-${Date.now()}|P|2.5
+PID|1||${doc}^^^HIS||${apellido}^${nombre}||${nac.replace(/-/g,'')}|${sexo}
+PV1|1|E|||||MED-02^Ruiz^Mateo||||||||||||V-S${sede}-0900|||||||||||||||||||||||||202611081200
+DG1|1||${cie10}^Diagnostico^I10||20261108|A`;
                 const res = await fetch('/hsb/hl7', {
                     method: 'POST',
                     body: hl7,
