@@ -647,66 +647,92 @@ async def serve_ui():
 </head>
 <body>
 
-    <!-- 1. PANTALLA DE LOGIN CON TOKENS JWT (FASE 4: SEGURIDAD) -->
+    <!-- 1. PANTALLA DE LOGIN CON AUTENTICACIÓN JWT (FASE 4: SEGURIDAD) -->
     <div id="loginScreen" class="container py-5">
-        <div class="card card-custom login-card p-4">
+        <div class="card card-custom login-card p-4 mx-auto" style="max-width: 420px;">
             <div class="text-center mb-4">
-                <i class="fa-solid fa-hospital-user text-primary fa-3x mb-2"></i>
-                <h3 class="fw-bold mb-1">Acceso a la Plataforma</h3>
-                <p class="text-muted small">Red de IPS InterSalud • Autenticación JWT / RBAC</p>
-            </div>
-
-            <div class="alert alert-info small py-2 mb-3">
-                <i class="fa-solid fa-shield-halved me-1"></i> Selecciona un rol de prueba para iniciar sesión con su token JWT firmado:
-            </div>
-
-            <!-- Accesos Rápidos de Prueba -->
-            <div class="row g-2 mb-3">
-                <div class="col-6">
-                    <div class="p-2 border rounded text-center role-btn-card bg-light" onclick="loginRapido('medico_ruiz', 'medico123')">
-                        <i class="fa-solid fa-user-doctor text-primary"></i><br>
-                        <small class="fw-bold">Médico</small><br>
-                        <span class="badge bg-primary" style="font-size: 0.65rem;">Dr. Ruiz</span>
-                    </div>
-                </div>
-                <div class="col-6">
-                    <div class="p-2 border rounded text-center role-btn-card bg-light" onclick="loginRapido('paciente1001', 'paciente123')">
-                        <i class="fa-solid fa-user text-success"></i><br>
-                        <small class="fw-bold">Paciente</small><br>
-                        <span class="badge bg-success" style="font-size: 0.65rem;">CC 1001</span>
-                    </div>
-                </div>
-                <div class="col-6">
-                    <div class="p-2 border rounded text-center role-btn-card bg-light" onclick="loginRapido('admision_sincelejo', 'admision123')">
-                        <i class="fa-solid fa-address-card text-warning"></i><br>
-                        <small class="fw-bold">Admisionista</small><br>
-                        <span class="badge bg-warning text-dark" style="font-size: 0.65rem;">Triage / Adm.</span>
-                    </div>
-                </div>
-                <div class="col-6">
-                    <div class="p-2 border rounded text-center role-btn-card bg-light" onclick="loginRapido('auditor_calidad', 'auditor123')">
-                        <i class="fa-solid fa-chart-line text-info"></i><br>
-                        <small class="fw-bold">Auditor</small><br>
-                        <span class="badge bg-info text-dark" style="font-size: 0.65rem;">Tablero / Audit</span>
-                    </div>
-                </div>
-            </div>
-
-            <hr>
-
-            <!-- Formulario Manual de Login -->
-            <form id="loginForm" onsubmit="loginManual(event)">
                 <div class="mb-2">
-                    <label class="form-label small">Usuario</label>
-                    <input type="text" class="form-control form-control-sm" id="loginUser" value="medico_ruiz" required>
+                    <span class="badge bg-primary-subtle text-primary p-3 rounded-circle">
+                        <i class="fa-solid fa-lock fa-2x"></i>
+                    </span>
+                </div>
+                <h4 class="fw-bold mb-1">Acceso a la Plataforma</h4>
+                <p class="text-muted small">Autenticación obligatoria con Token JWT y RBAC</p>
+            </div>
+
+            <!-- Alerta de Error de Credenciales -->
+            <div id="loginError" class="alert alert-danger small py-2 d-none">
+                <i class="fa-solid fa-circle-xmark me-1"></i> <span id="loginErrorMsg">Usuario o contraseña incorrectos.</span>
+            </div>
+
+            <!-- Formulario Estricto: Campos Vacíos Obligatorios -->
+            <form id="loginForm" onsubmit="loginManual(event)">
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold">Usuario</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-white"><i class="fa-solid fa-user text-muted"></i></span>
+                        <input type="text" class="form-control" id="loginUser" placeholder="Ingrese su usuario" autocomplete="off" required>
+                    </div>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label small">Contraseña</label>
-                    <input type="password" class="form-control form-control-sm" id="loginPass" value="medico123" required>
+                    <label class="form-label small fw-semibold">Contraseña</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-white"><i class="fa-solid fa-key text-muted"></i></span>
+                        <input type="password" class="form-control" id="loginPass" placeholder="Ingrese su contraseña" required>
+                    </div>
                 </div>
-                <button type="submit" class="btn btn-primary btn-sm w-100"><i class="fa-solid fa-key me-1"></i> Iniciar Sesión con JWT</button>
+                <button type="submit" id="btnLoginSubmit" class="btn btn-primary w-100 py-2 fw-semibold">
+                    <i class="fa-solid fa-right-to-bracket me-2"></i> Iniciar Sesión
+                </button>
             </form>
-            <div id="loginError" class="alert alert-danger small mt-3 py-1 d-none"></div>
+
+            <!-- Tabla de Referencia de Usuarios para el Docente / Evaluador -->
+            <div class="mt-4 pt-3 border-top">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="small text-muted fw-semibold"><i class="fa-solid fa-circle-info me-1"></i> Usuarios de prueba (Fase 4):</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered small text-center mb-2" style="font-size: 0.75rem;">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Rol</th>
+                                <th>Usuario</th>
+                                <th>Contraseña</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><span class="badge bg-primary">Médico</span></td>
+                                <td><code>medico_ruiz</code></td>
+                                <td><code>medico123</code></td>
+                                <td><button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="cargarCredenciales('medico_ruiz','medico123')">Rellenar</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge bg-success">Paciente</span></td>
+                                <td><code>paciente1001</code></td>
+                                <td><code>paciente123</code></td>
+                                <td><button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="cargarCredenciales('paciente1001','paciente123')">Rellenar</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge bg-warning text-dark">Admisión</span></td>
+                                <td><code>admision_sincelejo</code></td>
+                                <td><code>admision123</code></td>
+                                <td><button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="cargarCredenciales('admision_sincelejo','admision123')">Rellenar</button></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge bg-info text-dark">Auditor</span></td>
+                                <td><code>auditor_calidad</code></td>
+                                <td><code>auditor123</code></td>
+                                <td><button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="cargarCredenciales('auditor_calidad','auditor123')">Rellenar</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <small class="text-muted d-block" style="font-size: 0.7rem;">
+                    * Presiona <strong>Rellenar</strong> para cargar los datos en el formulario y luego presiona <strong>Iniciar Sesión</strong> para validar contra el servidor.
+                </small>
+            </div>
         </div>
     </div>
 
@@ -1014,38 +1040,62 @@ async def serve_ui():
     <script>
         let currentAuth = null;
 
-        async function loginRapido(user, pass) {
+        function cargarCredenciales(user, pass) {
             document.getElementById('loginUser').value = user;
             document.getElementById('loginPass').value = pass;
-            await ejecutarLogin(user, pass);
+            document.getElementById('loginError').classList.add('d-none');
+            document.getElementById('loginPass').focus();
         }
 
         async function loginManual(event) {
             event.preventDefault();
             const user = document.getElementById('loginUser').value.trim();
             const pass = document.getElementById('loginPass').value.trim();
+            if (!user || !pass) {
+                mostrarErrorLogin('Por favor ingrese usuario y contraseña');
+                return;
+            }
             await ejecutarLogin(user, pass);
         }
 
+        function mostrarErrorLogin(msg) {
+            const errBox = document.getElementById('loginError');
+            document.getElementById('loginErrorMsg').innerText = msg;
+            errBox.classList.remove('d-none');
+        }
+
         async function ejecutarLogin(username, password) {
+            const btn = document.getElementById('btnLoginSubmit');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i> Validando credenciales...';
+            document.getElementById('loginError').classList.add('d-none');
+
             try {
                 const res = await fetch('/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, password })
                 });
+
                 if (!res.ok) {
                     const err = await res.json();
-                    document.getElementById('loginError').innerText = err.detail || 'Error de autenticación';
-                    document.getElementById('loginError').classList.remove('d-none');
+                    mostrarErrorLogin(err.detail || 'Acceso denegado: Credenciales no válidas (HTTP 401)');
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
                     return;
                 }
+
                 currentAuth = await res.json();
                 sessionStorage.setItem('auth_token', currentAuth.access_token);
                 sessionStorage.setItem('auth_data', JSON.stringify(currentAuth));
                 mostrarPantallaApp();
             } catch (e) {
+                mostrarErrorLogin('Error de comunicación con el servidor de autenticación');
                 console.error(e);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
             }
         }
 
@@ -1089,6 +1139,9 @@ async def serve_ui():
         function logout() {
             sessionStorage.clear();
             currentAuth = null;
+            document.getElementById('loginUser').value = '';
+            document.getElementById('loginPass').value = '';
+            document.getElementById('loginError').classList.add('d-none');
             document.getElementById('appScreen').classList.add('d-none');
             document.getElementById('loginScreen').classList.remove('d-none');
         }
