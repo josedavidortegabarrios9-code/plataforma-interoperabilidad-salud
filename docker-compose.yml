@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  # Sede 1 - Sincelejo (Laboratorio Clínico)
+  pg_sede1:
+    image: postgres:15-alpine
+    container_name: pg_sede1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: historia_clinica_sede1
+    ports:
+      - "5431:5432"
+    volumes:
+      - sede1_data:/var/lib/postgresql/data
+      - ./db/init_schema.sql:/docker-entrypoint-initdb.d/init_schema.sql
+      - ./db/catalogs.sql:/docker-entrypoint-initdb.d/catalogs.sql
+      - ./db/seed_sede1.sql:/docker-entrypoint-initdb.d/seed_sede1.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d historia_clinica_sede1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - red_salud
+
+  # Sede 2 - Cartagena (Urgencias / Hospitalización)
+  pg_sede2:
+    image: postgres:15-alpine
+    container_name: pg_sede2
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: historia_clinica_sede2
+    ports:
+      - "5432:5432"
+    volumes:
+      - sede2_data:/var/lib/postgresql/data
+      - ./db/init_schema.sql:/docker-entrypoint-initdb.d/init_schema.sql
+      - ./db/catalogs.sql:/docker-entrypoint-initdb.d/catalogs.sql
+      - ./db/seed_sede2.sql:/docker-entrypoint-initdb.d/seed_sede2.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d historia_clinica_sede2"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - red_salud
+
+  # Sede 3 - Corozal (Consulta Externa Comunitaria)
+  pg_sede3:
+    image: postgres:15-alpine
+    container_name: pg_sede3
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: historia_clinica_sede3
+    ports:
+      - "5433:5432"
+    volumes:
+      - sede3_data:/var/lib/postgresql/data
+      - ./db/init_schema.sql:/docker-entrypoint-initdb.d/init_schema.sql
+      - ./db/catalogs.sql:/docker-entrypoint-initdb.d/catalogs.sql
+      - ./db/seed_sede3.sql:/docker-entrypoint-initdb.d/seed_sede3.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d historia_clinica_sede3"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - red_salud
+
+  # Servidor Oficial HAPI FHIR R4
+  hapi_fhir:
+    image: hapiproject/hapi:v6.8.0
+    container_name: hapi_fhir
+    ports:
+      - "8090:8080"
+    environment:
+      hapi.fhir.fhir_version: R4
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/fhir/metadata || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - red_salud
+
+  # Health Service Bus (HSB) + API Gateway + 4 Vistas
+  hsb_service:
+    build:
+      context: .
+      dockerfile: hsb/Dockerfile
+    container_name: hsb_service
+    ports:
+      - "8000:8000"
+    environment:
+      SEDE1_URL: postgresql://postgres:postgrespassword@pg_sede1:5432/historia_clinica_sede1
+      SEDE2_URL: postgresql://postgres:postgrespassword@pg_sede2:5432/historia_clinica_sede2
+      SEDE3_URL: postgresql://postgres:postgrespassword@pg_sede3:5432/historia_clinica_sede3
+      HAPI_FHIR_URL: http://hapi_fhir:8080/fhir
+      JWT_SECRET: super_secret_clinical_key_2026
+    depends_on:
+      pg_sede1:
+        condition: service_healthy
+      pg_sede2:
+        condition: service_healthy
+      pg_sede3:
+        condition: service_healthy
+    networks:
+      - red_salud
+
+volumes:
+  sede1_data:
+  sede2_data:
+  sede3_data:
+
+networks:
+  red_salud:
+    driver: bridge
