@@ -1,0 +1,6 @@
+documento;nombre;sexo;nacimiento;dx_local;fecha;triage;profesional
+1008;Camila Suarez Pineda;F;1996-02-10;DIARREA;2026-11-07T08:30;3;MED-01
+1009;Ricardo Mendoza Lara;M;1971-07-19;HIPERTENSION;2026-11-07T09:10;;MED-02
+1010;Sofia Blanco Mesa;F;2004-12-01;ASMA;2026-11-07T09:45;4;MED-01
+1011;Tomas Ortiz Vega;M;1988-05-23;DOLOR MISTERIOSO;2026-11-07T10:05;2;MED-02
+12;Nombre Corto;M;1990-01-01;CEFALEA;2026-11-07T10:30;;MED-01
