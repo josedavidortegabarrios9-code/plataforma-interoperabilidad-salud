@@ -1118,7 +1118,6 @@ async def serve_ui():
 
             if (rol === 'medico') {
                 itemMed.classList.remove('d-none');
-                itemRep.classList.remove('d-none');
                 document.getElementById('tab-medico').click();
                 consultarHistoriaMedico();
             } else if (rol === 'paciente') {
