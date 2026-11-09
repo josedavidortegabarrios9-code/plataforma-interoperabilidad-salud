@@ -161,22 +161,45 @@ def fetch_atenciones_sede(sede_id: int, documento: str) -> Tuple[bool, Optional[
                         for d in dx_rows
                     ]
 
-                    # Tecnologías / Laboratorios
+                    # Tecnologías / Laboratorios y Medicamentos
                     cur.execute("""
-                        SELECT descripcion_tecnologia, codigo_loinc, resultado_valor, unidad_medida
+                        SELECT descripcion_tecnologia, codigo_loinc, resultado_valor, unidad_medida, dias_tratamiento
                         FROM tecnologia_salud
                         WHERE id_atencion = %s
                     """, (atn_id,))
                     tec_rows = cur.fetchall()
-                    tecnologias = [
-                        {
-                            "codigo": t["codigo_loinc"] or "LOINC",
-                            "nombre": t["descripcion_tecnologia"],
-                            "valor": float(t["resultado_valor"]) if t["resultado_valor"] is not None else None,
-                            "unidad": t["unidad_medida"] or ""
+                    tecnologias = []
+                    medicamentos = []
+                    for t in tec_rows:
+                        desc = t["descripcion_tecnologia"]
+                        # Si tiene dias de tratamiento o términos de fármacos, clasificar en medicamentos
+                        is_med = bool(t.get("dias_tratamiento")) or any(k in desc.lower() for k in ["tableta", "mg", "capsula", "inhalador", "sobre", "jarabe", "gota", "oral", "suspension"])
+                        if is_med:
+                            dosis_str = f"{t['resultado_valor']} {t['unidad_medida']}" if t['resultado_valor'] is not None else ""
+                            medicamentos.append(f"{desc} {dosis_str}".strip())
+                        else:
+                            tecnologias.append({
+                                "codigo": t["codigo_loinc"] or "LOINC",
+                                "nombre": desc,
+                                "valor": float(t["resultado_valor"]) if t["resultado_valor"] is not None else None,
+                                "unidad": t["unidad_medida"] or ""
+                            })
+
+                    # Egreso Clínico
+                    cur.execute("""
+                        SELECT fecha_hora_salida, cod_condicion_salida, sello_integridad
+                        FROM egreso
+                        WHERE id_atencion = %s
+                    """, (atn_id,))
+                    eg_row = cur.fetchone()
+                    egreso_info = None
+                    if eg_row:
+                        cond_map = {"01": "Alta médica con tratamiento ambulatorio", "02": "Hospitalización", "03": "Remisión"}
+                        egreso_info = {
+                            "fecha": str(eg_row["fecha_hora_salida"]),
+                            "destino": cond_map.get(eg_row["cod_condicion_salida"], "Alta médica"),
+                            "sello": eg_row["sello_integridad"]
                         }
-                        for t in tec_rows
-                    ]
 
                     atenciones.append({
                         "id_atencion": f"S{sede_id}-{atn_id:04d}",
@@ -188,7 +211,9 @@ def fetch_atenciones_sede(sede_id: int, documento: str) -> Tuple[bool, Optional[
                         "motivo": a_row["causa_atencion"],
                         "medico": a_row["medico"] or "Médico Institucional",
                         "diagnosticos": diagnosticos,
-                        "tecnologias": tecnologias
+                        "tecnologias": tecnologias,
+                        "medicamentos": medicamentos,
+                        "egreso": egreso_info
                     })
 
         conn.close()

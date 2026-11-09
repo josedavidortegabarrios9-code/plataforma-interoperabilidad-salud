@@ -32,7 +32,7 @@ from hsb.database import (
 )
 from hsb.auth import (
     JWTManager, require_role, USUARIOS_PRUEBA, ACTIVE_2FA_CODES,
-    verify_password, generate_2fa_code, verify_hsb_ingest_auth
+    verify_password, generate_2fa_code, verify_hsb_ingest_auth, hash_password
 )
 from collections import deque
 
@@ -76,14 +76,14 @@ performance_metrics = {
 # Inicializar datos sintéticos precargados para asegurar cobertura inicial en 0%
 def init_seed_data():
     seed_patients_data = [
-        {"doc": "1001", "nombre": "Carlos", "apellido": "Perez", "nac": "1980-04-12", "sexo": "M", "sede": 1, "sede_nombre": "Sincelejo", "enc_id": "S1-0150", "motivo": "Evaluación de laboratorio clínico", "medico": "Dra. Laura Vega", "dx": [], "tec": [{"codigo": "718-7", "nombre": "Hemoglobina", "valor": 13.8, "unidad": "g/dL"}]},
-        {"doc": "1002", "nombre": "Maria", "apellido": "Gomez", "nac": "1985-06-20", "sexo": "F", "sede": 1, "sede_nombre": "Sincelejo", "enc_id": "S1-0151", "motivo": "Control médico ambulatorio", "medico": "Dra. Laura Vega", "dx": [{"codigo": "I10", "descripcion": "Hipertensión esencial", "tipo": "PRINCIPAL"}], "tec": []},
-        {"doc": "1003", "nombre": "Jorge", "apellido": "Diaz", "nac": "1975-11-15", "sexo": "M", "sede": 1, "sede_nombre": "Sincelejo", "enc_id": "S1-0152", "motivo": "Consulta medicina general", "medico": "Dra. Laura Vega", "dx": [{"codigo": "J45.9", "descripcion": "Asma no especificada", "tipo": "PRINCIPAL"}], "tec": []},
-        {"doc": "1004", "nombre": "Ana", "apellido": "Torres", "nac": "1990-03-08", "sexo": "F", "sede": 2, "sede_nombre": "Cartagena", "enc_id": "S2-0102", "motivo": "Urgencias dolor abdominal", "medico": "Dr. Mateo Ruiz", "triage": "2", "dx": [{"codigo": "K35.8", "descripcion": "Apendicitis aguda", "tipo": "PRINCIPAL"}], "tec": []},
-        {"doc": "1005", "nombre": "Luis", "apellido": "Martinez", "nac": "1968-09-22", "sexo": "M", "sede": 2, "sede_nombre": "Cartagena", "enc_id": "S2-0103", "motivo": "Atención urgencias cefalea", "medico": "Dr. Mateo Ruiz", "triage": "3", "dx": [{"codigo": "R51", "descripcion": "Cefalea", "tipo": "PRINCIPAL"}], "tec": []},
-        {"doc": "1006", "nombre": "Carmen", "apellido": "Ortiz", "nac": "1982-12-05", "sexo": "F", "sede": 3, "sede_nombre": "Corozal", "enc_id": "S3-0202", "motivo": "Consulta externa especializada", "medico": "Dra. Andrea Soler", "dx": [{"codigo": "E11.9", "descripcion": "Diabetes mellitus tipo 2", "tipo": "PRINCIPAL"}], "tec": []},
-        {"doc": "1007", "nombre": "Elena", "apellido": "Vargas", "nac": "1995-07-30", "sexo": "F", "sede": 2, "sede_nombre": "Cartagena", "enc_id": "S2-0104", "motivo": "Admisión Triage Urgencias", "medico": "Dr. Mateo Ruiz", "triage": "3", "dx": [{"codigo": "A09", "descripcion": "Gastroenteritis aguda", "tipo": "PRINCIPAL"}], "tec": []},
-        {"doc": "1008", "nombre": "Pedro", "apellido": "Castillo", "nac": "1970-01-18", "sexo": "M", "sede": 3, "sede_nombre": "Corozal", "enc_id": "S3-0203", "motivo": "Control programa hipertensión", "medico": "Dra. Andrea Soler", "dx": [{"codigo": "I10", "descripcion": "Hipertensión esencial", "tipo": "PRINCIPAL"}], "tec": []}
+        {"doc": "1001", "nombre": "Carlos", "apellido": "Perez", "nac": "1980-04-12", "sexo": "M", "sede": 1, "sede_nombre": "Sincelejo", "enc_id": "S1-0150", "motivo": "Evaluación de laboratorio clínico", "medico": "Dra. Laura Vega", "dx": [], "tec": [{"codigo": "718-7", "nombre": "Hemoglobina", "valor": 13.8, "unidad": "g/dL"}], "meds": ["Salbutamol 100mcg Inhalador - 2 inhalaciones cada 8 horas por 30 días"]},
+        {"doc": "1002", "nombre": "Maria", "apellido": "Gomez", "nac": "1985-06-20", "sexo": "F", "sede": 1, "sede_nombre": "Sincelejo", "enc_id": "S1-0151", "motivo": "Control médico ambulatorio", "medico": "Dra. Laura Vega", "dx": [{"codigo": "I10", "descripcion": "Hipertensión esencial", "tipo": "PRINCIPAL"}], "tec": [], "meds": ["Losartán 50mg Tabletas - 1 tableta cada 12 horas por 30 días", "Amlodipino 5mg - 1 tableta diaria en ayunas"]},
+        {"doc": "1003", "nombre": "Jorge", "apellido": "Diaz", "nac": "1975-11-15", "sexo": "M", "sede": 1, "sede_nombre": "Sincelejo", "enc_id": "S1-0152", "motivo": "Consulta medicina general", "medico": "Dra. Laura Vega", "dx": [{"codigo": "J45.9", "descripcion": "Asma no especificada", "tipo": "PRINCIPAL"}], "tec": [], "meds": ["Salbutamol Inhalador 100mcg - 2 puff cada 8 horas", "Beclometasona 250mcg - 1 inhalación cada 12 horas"]},
+        {"doc": "1004", "nombre": "Ana", "apellido": "Torres", "nac": "1990-03-08", "sexo": "F", "sede": 2, "sede_nombre": "Cartagena", "enc_id": "S2-0102", "motivo": "Urgencias dolor abdominal", "medico": "Dr. Mateo Ruiz", "triage": "2", "dx": [{"codigo": "K35.8", "descripcion": "Apendicitis aguda", "tipo": "PRINCIPAL"}], "tec": [], "meds": ["Ciprofloxacino 500mg - 1 tableta cada 12 horas por 7 días", "Hioscina Butilbromuro 10mg - 1 tableta cada 8 horas"]},
+        {"doc": "1005", "nombre": "Luis", "apellido": "Martinez", "nac": "1968-09-22", "sexo": "M", "sede": 2, "sede_nombre": "Cartagena", "enc_id": "S2-0103", "motivo": "Atención urgencias cefalea", "medico": "Dr. Mateo Ruiz", "triage": "3", "dx": [{"codigo": "R51", "descripcion": "Cefalea", "tipo": "PRINCIPAL"}], "tec": [], "meds": ["Acetaminofén 500mg - 1 tableta cada 8 horas si hay dolor", "Naproxeno 500mg - 1 tableta cada 12 horas con las comidas"]},
+        {"doc": "1006", "nombre": "Carmen", "apellido": "Ortiz", "nac": "1982-12-05", "sexo": "F", "sede": 3, "sede_nombre": "Corozal", "enc_id": "S3-0202", "motivo": "Consulta externa especializada", "medico": "Dra. Andrea Soler", "dx": [{"codigo": "E11.9", "descripcion": "Diabetes mellitus tipo 2", "tipo": "PRINCIPAL"}], "tec": [], "meds": ["Metformina 850mg - 1 tableta cada 12 horas con las comidas", "Insulina NPH 100 UI/ml - 16 UI vía subcutánea en la mañana"]},
+        {"doc": "1007", "nombre": "Elena", "apellido": "Vargas", "nac": "1995-07-30", "sexo": "F", "sede": 2, "sede_nombre": "Cartagena", "enc_id": "S2-0104", "motivo": "Admisión Triage Urgencias", "medico": "Dr. Mateo Ruiz", "triage": "3", "dx": [{"codigo": "A09", "descripcion": "Gastroenteritis aguda", "tipo": "PRINCIPAL"}], "tec": [], "meds": ["Sales de Rehidratación Oral (SRO) - 1 sobre disuelto en 1L de agua", "Trimebutina 200mg - 1 tableta cada 8 horas"]},
+        {"doc": "1008", "nombre": "Pedro", "apellido": "Castillo", "nac": "1970-01-18", "sexo": "M", "sede": 3, "sede_nombre": "Corozal", "enc_id": "S3-0203", "motivo": "Control programa hipertensión", "medico": "Dra. Andrea Soler", "dx": [{"codigo": "I10", "descripcion": "Hipertensión esencial", "tipo": "PRINCIPAL"}], "tec": [], "meds": ["Enalapril 20mg - 1 tableta cada 12 horas", "Hidroclorotiazida 25mg - 1 tableta diaria en ayunas"]}
     ]
 
     for p in seed_patients_data:
@@ -108,6 +108,8 @@ def init_seed_data():
             "triage": p.get("triage", "3"),
             "diagnosticos": p.get("dx", []),
             "tecnologias": p.get("tec", []),
+            "medicamentos": p.get("meds", []),
+            "egreso": {"destino": "Alta médica con tratamiento ambulatorio", "sello": hashlib.sha256(f"{p['doc']}-{p['enc_id']}".encode()).hexdigest()} if not p.get("triage") else None,
             "estado": "En espera de atención médica" if p.get("triage") else "Atendido"
         })
 
@@ -124,6 +126,8 @@ def init_seed_data():
         "triage": "3",
         "diagnosticos": [{"codigo": "R51", "descripcion": "Cefalea", "tipo": "PRINCIPAL"}],
         "tecnologias": [],
+        "medicamentos": ["Acetaminofén 500mg - 1 tableta cada 8 horas si hay dolor", "Ibuprofeno 400mg - 1 cápsula cada 8 horas"],
+        "egreso": {"destino": "Alta médica con tratamiento ambulatorio", "sello": "e2a1b94c8f001928374655bbcc11eeaa"},
         "estado": "Atendido"
     })
     clinical_encounters.append({
@@ -137,6 +141,8 @@ def init_seed_data():
         "medico": "Dra. Andrea Soler",
         "diagnosticos": [{"codigo": "E11.9", "descripcion": "Diabetes mellitus tipo 2", "tipo": "PRINCIPAL"}],
         "tecnologias": [],
+        "medicamentos": ["Metformina 850mg - 1 tableta con el desayuno por 90 días"],
+        "egreso": {"destino": "Alta médica con plan de control", "sello": "f3b2c85d9a112039485766ccddee00bb"},
         "estado": "Atendido"
     })
 
@@ -330,6 +336,20 @@ async def ingest_hl7(
         "fhir_patient_id": f"pac-{doc}"  # Cobertura FHIR sube a 100%
     }
 
+    # Extraer medicamentos y egreso si vienen en el mensaje HL7 (segmentos RXA y PV2)
+    meds_in_msg = []
+    egreso_destino = None
+    for l_hl7 in raw_body.splitlines():
+        l_hl7 = l_hl7.strip()
+        if l_hl7.startswith("RXA|"):
+            p_hl7 = l_hl7.split("|")
+            if len(p_hl7) > 5 and p_hl7[5]:
+                meds_in_msg.append(p_hl7[5].replace("^", " - ").strip())
+        elif l_hl7.startswith("PV2|"):
+            p_hl7 = l_hl7.split("|")
+            if len(p_hl7) > 3 and p_hl7[3]:
+                egreso_destino = p_hl7[3].replace("^", " ").strip()
+
     # Agregar encuentro a la vista
     new_enc = {
         "id_atencion": data["encounter_id"],
@@ -341,7 +361,12 @@ async def ingest_hl7(
         "motivo": "Atención médica integrada vía HSB",
         "medico": data["medico"],
         "diagnosticos": [{"codigo": data["cod_cie10"], "descripcion": data["desc_cie10"], "tipo": "PRINCIPAL"}] if data.get("cod_cie10") else [],
-        "tecnologias": [{"codigo": data["observacion"]["cod_loinc"], "nombre": data["observacion"]["desc_loinc"], "valor": data["observacion"]["valor"], "unidad": data["observacion"]["unidad"]}] if data.get("observacion") else []
+        "tecnologias": [{"codigo": data["observacion"]["cod_loinc"], "nombre": data["observacion"]["desc_loinc"], "valor": data["observacion"]["valor"], "unidad": data["observacion"]["unidad"]}] if data.get("observacion") else [],
+        "medicamentos": meds_in_msg,
+        "egreso": {
+            "destino": egreso_destino or "Alta médica con tratamiento ambulatorio",
+            "sello": hashlib.sha256(f"{doc}-{data['encounter_id']}-EGRESO".encode()).hexdigest()
+        }
     }
     clinical_encounters.append(new_enc)
 
@@ -550,7 +575,31 @@ async def login(credentials: Dict[str, Any]):
     password = str(credentials.get("password", "")).strip()
 
     user = USUARIOS_PRUEBA.get(username)
-    if not user or not verify_password(password, user["password_hash"]):
+    if not user:
+        # Si el usuario es de la forma 'paciente<doc>' o '<doc>' y existe en active_patients
+        doc_num = username.replace("paciente", "").strip()
+        if doc_num in active_patients:
+            pat = active_patients[doc_num]
+            user = {
+                "password_hash": hash_password("paciente123"),
+                "rol": "paciente",
+                "nombre": f"{pat.get('nombre', 'Paciente')} {pat.get('apellido', '')}",
+                "sede": 1,
+                "documento": doc_num,
+                "email": f"paciente.{doc_num}@correo.com"
+            }
+            USUARIOS_PRUEBA[username] = user
+            USUARIOS_PRUEBA[doc_num] = user
+            USUARIOS_PRUEBA[f"paciente{doc_num}"] = user
+
+    # Verificar contraseña o aceptar 'paciente123' o el propio documento como contraseña de paciente
+    pw_ok = False
+    if user and verify_password(password, user["password_hash"]):
+        pw_ok = True
+    elif user and user.get("rol") == "paciente" and (password == "paciente123" or password == user.get("documento")):
+        pw_ok = True
+
+    if not user or not pw_ok:
         audit_ledger.add_event(username or "ANONIMO", "DESCONOCIDO", "LOGIN_FALLIDO", "SISTEMA_AUTH", "DENEGADO")
         raise HTTPException(status_code=401, detail="Credenciales incorrectas (Usuario o contraseña no válidos)")
 
@@ -643,11 +692,12 @@ async def get_historia_unificada(
     - Médico y Auditor: Acceso completo.
     """
     # 1. Determinar identidad y rol vía Bearer Token o fallback Header
-    if authorization and authorization.startswith("Bearer "):
+    if authorization and isinstance(authorization, str) and authorization.startswith("Bearer "):
         token = authorization.split(" ")[1]
         user_info = JWTManager.verify_token(token)
     else:
-        user_info = {"rol": (x_rol or "medico").lower(), "doc": "1001", "sub": "usuario_test"}
+        effective_rol = (x_rol if isinstance(x_rol, str) else "medico").lower()
+        user_info = {"rol": effective_rol, "doc": "1001", "sub": "usuario_test"}
 
     rol = user_info.get("rol", "").lower()
     user_doc = user_info.get("doc", "")
@@ -853,6 +903,17 @@ async def registrar_admision_clinica(data: Dict[str, Any]):
     performance_metrics["total_recibidos"] += 1
     performance_metrics["entregados"] += 1
 
+    # Registrar cuenta de usuario para que el paciente nuevo pueda consultar su portal
+    USUARIOS_PRUEBA[f"paciente{pid}"] = {
+        "password_hash": hash_password("paciente123"),
+        "rol": "paciente",
+        "nombre": f"{nombre} {apellido}",
+        "sede": sede,
+        "documento": pid,
+        "email": f"{nombre.lower().replace(' ', '.')}.{pid}@correo.com"
+    }
+    USUARIOS_PRUEBA[pid] = USUARIOS_PRUEBA[f"paciente{pid}"]
+
     return {
         "estado": "admitido",
         "id_atencion": enc_id,
@@ -861,6 +922,8 @@ async def registrar_admision_clinica(data: Dict[str, Any]):
         "sede": sede_nombre,
         "medico_asignado": medico,
         "triage": triage,
+        "usuario_paciente": f"paciente{pid}",
+        "clave_inicial": "paciente123",
         "fhir_bundle_creado": True
     }
 
@@ -1393,9 +1456,9 @@ async def serve_ui():
                             </div>
                         </div>
 
-                        <!-- SECCIÓN 2: TECNOLOGÍAS EN SALUD -->
-                        <div class="form-section-title">Resultados del uso de las tecnologías en salud</div>
-                        <div class="row g-3 mb-4">
+                        <!-- SECCIÓN 2: DIAGNÓSTICO, TECNOLOGÍAS Y MEDICAMENTOS -->
+                        <div class="form-section-title">Diagnóstico, Tecnologías en Salud y Formulación Farmacológica</div>
+                        <div class="row g-3 mb-3">
                             <div class="col-md-4">
                                 <label class="form-label-custom">Vía de ingreso del usuario al servicio de salud</label>
                                 <select class="form-select form-select-custom" id="regViaIngreso">
@@ -1412,6 +1475,7 @@ async def serve_ui():
                                     <option value="E11.9">E11.9 - Diabetes mellitus tipo 2</option>
                                     <option value="R51">R51 - Cefalea</option>
                                     <option value="A09">A09 - Diarrea y gastroenteritis</option>
+                                    <option value="K35.8">K35.8 - Apendicitis aguda</option>
                                 </select>
                             </div>
                             <div class="col-md-4">
@@ -1421,6 +1485,26 @@ async def serve_ui():
                                     <option value="2" selected>Sede 2 - Cartagena</option>
                                     <option value="3">Sede 3 - Corozal</option>
                                 </select>
+                            </div>
+                        </div>
+
+                        <!-- FILA DE MEDICAMENTOS Y TECNOLOGÍAS -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label-custom"><i class="fa-solid fa-pills text-success me-1"></i> Medicamento Formulado</label>
+                                <select class="form-select form-select-custom" id="regMedicamento">
+                                    <option value="Losartán 50mg Tabletas" selected>Losartán 50mg Tabletas (Antihipertensivo)</option>
+                                    <option value="Metformina 850mg Tabletas">Metformina 850mg Tabletas (Hipoglucemiante)</option>
+                                    <option value="Salbutamol 100mcg Inhalador">Salbutamol 100mcg Inhalador (Broncodilatador)</option>
+                                    <option value="Acetaminofén 500mg Tabletas">Acetaminofén 500mg Tabletas (Analgésico/Antipirético)</option>
+                                    <option value="Amoxicilina 500mg Cápsulas">Amoxicilina 500mg Cápsulas (Antibiótico)</option>
+                                    <option value="Omeprazol 20mg Cápsulas">Omeprazol 20mg Cápsulas (Protector gástrico)</option>
+                                    <option value="Sales de Rehidratación Oral (SRO)">Sales de Rehidratación Oral (SRO)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label-custom"><i class="fa-solid fa-clock me-1"></i> Posología / Dosis y Días de Tratamiento</label>
+                                <input type="text" class="form-control form-control-custom" id="regPosologia" placeholder="Ej: Tomar 1 tableta cada 12 horas por 30 días" value="Tomar 1 tableta cada 12 horas por 30 días">
                             </div>
                         </div>
 
@@ -2013,11 +2097,22 @@ async def serve_ui():
                 box.classList.remove('d-none');
                 const sedeNombre = sede === '1' ? 'Sincelejo' : (sede === '2' ? 'Cartagena' : 'Corozal');
                 document.getElementById('admisionResultText').innerHTML = `
-                    <div class="d-flex align-items-center mb-1"><i class="fa-solid fa-circle-check text-success fs-5 me-2"></i> <strong>¡Paciente Admitido y Asignado con Éxito!</strong></div>
+                    <div class="d-flex align-items-center mb-2"><i class="fa-solid fa-circle-check text-success fs-5 me-2"></i> <strong>¡Paciente Admitido y Asignado con Éxito!</strong></div>
                     <strong>Paciente:</strong> ${nombre} ${apellido} (Documento: <code>${pid}</code>)<br>
                     <strong>Médico Asignado:</strong> <span class="badge bg-primary">${medico}</span> • <strong>Triage:</strong> Nivel ${triage} • <strong>Sede:</strong> Sede ${sede} (${sedeNombre})<br>
-                    <strong>Motivo:</strong> ${motivo}<br>
-                    <small class="text-muted"><i class="fa-solid fa-network-wired me-1"></i> Notificado a la sala de espera del médico, persistido en PostgreSQL y normalizado en FHIR R4.</small>
+                    <strong>Motivo de Ingreso:</strong> ${motivo}<br>
+                    
+                    <div class="mt-3 p-3 bg-white rounded border border-success shadow-sm">
+                        <h6 class="fw-bold text-success mb-2">
+                            <i class="fa-solid fa-key me-2"></i> Credenciales de Acceso para el Paciente (Portal de Pacientes):
+                        </h6>
+                        <p class="small text-muted mb-2">Entregue estas credenciales al paciente para que pueda consultar su historia clínica unificada y descargar su Bundle FHIR:</p>
+                        <div class="d-flex flex-wrap gap-3 small">
+                            <div><strong>Usuario:</strong> <code class="fs-6 text-primary">paciente${pid}</code> (o su cédula: <code>${pid}</code>)</div>
+                            <div><strong>Contraseña inicial:</strong> <code class="fs-6 text-dark">paciente123</code></div>
+                            <div><strong>2FA:</strong> Código que aparece en pantalla o <code>807286</code></div>
+                        </div>
+                    </div>
                 `;
                 box.scrollIntoView({ behavior: 'smooth' });
                 cargarPacientesAsignadosMedico();
@@ -2069,10 +2164,16 @@ async def serve_ui():
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i> Integrando en HSB y creando Bundle FHIR...';
 
             try {
+                const med = document.getElementById('regMedicamento') ? document.getElementById('regMedicamento').value : 'Losartán 50mg Tabletas';
+                const pos = document.getElementById('regPosologia') ? document.getElementById('regPosologia').value : 'Tomar cada 12h x 30 días';
+                const destino = document.getElementById('regDestinoEgreso') ? document.getElementById('regDestinoEgreso').value : 'Alta médica';
+                
                 const hl7 = `MSH|^~\\&|HIS_SEDE${sede}|SEDE${sede}|HSB|CENTRAL|20261108120000||ADT^A01|MSG-${Date.now()}|P|2.5
 PID|1||${doc}^^^HIS||${apellido}^${nombre}||${nac.replace(/-/g,'')}|${sexo}
 PV1|1|E|||||MED-02^Ruiz^Mateo||||||||||||V-S${sede}-0900|||||||||||||||||||||||||202611081200
-DG1|1||${cie10}^Diagnostico^I10||20261108|A`;
+PV2|||${destino}
+DG1|1||${cie10}^Diagnostico^I10||20261108|A
+RXA|0|1|202611081200|202611081200|${med}^${pos}`;
                 const res = await fetch('/hsb/hl7', {
                     method: 'POST',
                     body: hl7,
@@ -2121,17 +2222,28 @@ DG1|1||${cie10}^Diagnostico^I10||20261108|A`;
                 }
 
                 data.atenciones.forEach(a => {
-                    let dxHtml = a.diagnosticos.map(d => `<span class="badge bg-dark me-1">${d.codigo} - ${d.descripcion}</span>`).join(' ');
-                    let tecHtml = a.tecnologias.map(t => `<span class="badge bg-primary me-1">${t.nombre}: ${t.valor} ${t.unidad}</span>`).join(' ');
+                    let dxHtml = (a.diagnosticos || []).map(d => `<span class="badge bg-dark me-1"><i class="fa-solid fa-stethoscope me-1"></i>${d.codigo} - ${d.descripcion}</span>`).join(' ');
+                    let tecHtml = (a.tecnologias || []).map(t => `<span class="badge bg-primary me-1"><i class="fa-solid fa-flask-vial me-1"></i>${t.nombre}${t.valor ? ': ' + t.valor + ' ' + (t.unidad || '') : ''}</span>`).join(' ');
+                    let medHtml = (a.medicamentos || []).map(m => `<span class="badge bg-success me-1"><i class="fa-solid fa-pills me-1"></i>${typeof m === 'string' ? m : (m.nombre + (m.dosis ? ' (' + m.dosis + ')' : ''))}</span>`).join(' ');
+                    let egresoHtml = a.egreso ? `
+                        <div class="mt-2 p-2 bg-white rounded border border-info small">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span><i class="fa-solid fa-door-open text-primary me-1"></i><strong>Egreso Clínico:</strong> ${a.egreso.destino || a.egreso.condicion || 'Alta médica'}</span>
+                                <span class="badge bg-light text-dark border"><i class="fa-solid fa-stamp text-success me-1"></i>Sello SHA-256: <code>${(a.egreso.sello || 'SHA256').substring(0, 16)}...</code></span>
+                            </div>
+                        </div>` : '';
+
                     timeline.innerHTML += `
-                        <div class="card mb-3 border-0 bg-light p-3">
+                        <div class="card mb-3 border-0 bg-light p-3 shadow-sm">
                             <div class="d-flex justify-content-between">
                                 <div><span class="badge bg-info text-dark me-2">Sede ${a.sede}: ${a.sede_nombre}</span> <span class="text-muted small">${a.fecha}</span></div>
                                 <span class="badge bg-secondary">${a.clase}</span>
                             </div>
                             <h6 class="fw-bold mt-2 mb-1">${a.motivo}</h6>
-                            <p class="small text-muted mb-2">Médico: ${a.medico}</p>
-                            <div>${dxHtml} ${tecHtml}</div>
+                            <p class="small text-muted mb-2">Médico Responsable: <strong>${a.medico}</strong></p>
+                            <div class="mb-1">${dxHtml} ${tecHtml}</div>
+                            <div class="mt-2">${medHtml ? '<strong><small class="text-muted d-block mb-1">Medicamentos Formulados:</small></strong> ' + medHtml : ''}</div>
+                            ${egresoHtml}
                         </div>
                     `;
                 });
