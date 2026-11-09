@@ -74,28 +74,43 @@ performance_metrics = {
 
 # Inicializar datos sintéticos precargados para asegurar cobertura inicial en 0%
 def init_seed_data():
-    # Carlos Perez (CC 1001) presente en las 3 sedes
-    active_patients["1001"] = {
-        "documento": "1001",
-        "tipo_documento": "CC",
-        "nombre": "Carlos",
-        "apellido": "Perez",
-        "nacimiento": "1980-04-12",
-        "sexo": "M",
-        "fhir_patient_id": None  # Cobertura inicial 0%
-    }
-    clinical_encounters.append({
-        "id_atencion": "S1-0150",
-        "documento": "1001",
-        "sede": 1,
-        "sede_nombre": "Sincelejo",
-        "fecha": "2026-11-07T11:00:00",
-        "clase": "AMB",
-        "motivo": "Evaluación de laboratorio clínico",
-        "medico": "Dra. Laura Vega",
-        "diagnosticos": [],
-        "tecnologias": [{"codigo": "718-7", "nombre": "Hemoglobina", "valor": 13.8, "unidad": "g/dL"}]
-    })
+    seed_patients_data = [
+        {"doc": "1001", "nombre": "Carlos", "apellido": "Perez", "nac": "1980-04-12", "sexo": "M", "sede": 1, "sede_nombre": "Sincelejo", "enc_id": "S1-0150", "motivo": "Evaluación de laboratorio clínico", "medico": "Dra. Laura Vega", "dx": [], "tec": [{"codigo": "718-7", "nombre": "Hemoglobina", "valor": 13.8, "unidad": "g/dL"}]},
+        {"doc": "1002", "nombre": "Maria", "apellido": "Gomez", "nac": "1985-06-20", "sexo": "F", "sede": 1, "sede_nombre": "Sincelejo", "enc_id": "S1-0151", "motivo": "Control médico ambulatorio", "medico": "Dra. Laura Vega", "dx": [{"codigo": "I10", "descripcion": "Hipertensión esencial", "tipo": "PRINCIPAL"}], "tec": []},
+        {"doc": "1003", "nombre": "Jorge", "apellido": "Diaz", "nac": "1975-11-15", "sexo": "M", "sede": 1, "sede_nombre": "Sincelejo", "enc_id": "S1-0152", "motivo": "Consulta medicina general", "medico": "Dra. Laura Vega", "dx": [{"codigo": "J45.9", "descripcion": "Asma no especificada", "tipo": "PRINCIPAL"}], "tec": []},
+        {"doc": "1004", "nombre": "Ana", "apellido": "Torres", "nac": "1990-03-08", "sexo": "F", "sede": 2, "sede_nombre": "Cartagena", "enc_id": "S2-0102", "motivo": "Urgencias dolor abdominal", "medico": "Dr. Mateo Ruiz", "triage": "2", "dx": [{"codigo": "K35.8", "descripcion": "Apendicitis aguda", "tipo": "PRINCIPAL"}], "tec": []},
+        {"doc": "1005", "nombre": "Luis", "apellido": "Martinez", "nac": "1968-09-22", "sexo": "M", "sede": 2, "sede_nombre": "Cartagena", "enc_id": "S2-0103", "motivo": "Atención urgencias cefalea", "medico": "Dr. Mateo Ruiz", "triage": "3", "dx": [{"codigo": "R51", "descripcion": "Cefalea", "tipo": "PRINCIPAL"}], "tec": []},
+        {"doc": "1006", "nombre": "Carmen", "apellido": "Ortiz", "nac": "1982-12-05", "sexo": "F", "sede": 3, "sede_nombre": "Corozal", "enc_id": "S3-0202", "motivo": "Consulta externa especializada", "medico": "Dra. Andrea Soler", "dx": [{"codigo": "E11.9", "descripcion": "Diabetes mellitus tipo 2", "tipo": "PRINCIPAL"}], "tec": []},
+        {"doc": "1007", "nombre": "Elena", "apellido": "Vargas", "nac": "1995-07-30", "sexo": "F", "sede": 2, "sede_nombre": "Cartagena", "enc_id": "S2-0104", "motivo": "Admisión Triage Urgencias", "medico": "Dr. Mateo Ruiz", "triage": "3", "dx": [{"codigo": "A09", "descripcion": "Gastroenteritis aguda", "tipo": "PRINCIPAL"}], "tec": []},
+        {"doc": "1008", "nombre": "Pedro", "apellido": "Castillo", "nac": "1970-01-18", "sexo": "M", "sede": 3, "sede_nombre": "Corozal", "enc_id": "S3-0203", "motivo": "Control programa hipertensión", "medico": "Dra. Andrea Soler", "dx": [{"codigo": "I10", "descripcion": "Hipertensión esencial", "tipo": "PRINCIPAL"}], "tec": []}
+    ]
+
+    for p in seed_patients_data:
+        active_patients[p["doc"]] = {
+            "documento": p["doc"],
+            "tipo_documento": "CC",
+            "nombre": p["nombre"],
+            "apellido": p["apellido"],
+            "nacimiento": p["nac"],
+            "sexo": p["sexo"],
+            "fhir_patient_id": f"pac-{p['doc']}" if p["doc"] != "1001" else None
+        }
+        clinical_encounters.append({
+            "id_atencion": p["enc_id"],
+            "documento": p["doc"],
+            "sede": p["sede"],
+            "sede_nombre": p["sede_nombre"],
+            "fecha": "2026-11-08T08:00:00",
+            "clase": "EMER" if p.get("triage") else "AMB",
+            "motivo": p["motivo"],
+            "medico": p["medico"],
+            "triage": p.get("triage", "3"),
+            "diagnosticos": p.get("dx", []),
+            "tecnologias": p.get("tec", []),
+            "estado": "En espera de atención médica" if p.get("triage") else "Atendido"
+        })
+
+    # Consultas para Carlos Perez (1001) en Sede 2 y Sede 3
     clinical_encounters.append({
         "id_atencion": "S2-0101",
         "documento": "1001",
@@ -107,7 +122,8 @@ def init_seed_data():
         "medico": "Dr. Mateo Ruiz",
         "triage": "3",
         "diagnosticos": [{"codigo": "R51", "descripcion": "Cefalea", "tipo": "PRINCIPAL"}],
-        "tecnologias": []
+        "tecnologias": [],
+        "estado": "Atendido"
     })
     clinical_encounters.append({
         "id_atencion": "S3-0201",
@@ -119,10 +135,10 @@ def init_seed_data():
         "motivo": "Seguimiento endocrinológico",
         "medico": "Dra. Andrea Soler",
         "diagnosticos": [{"codigo": "E11.9", "descripcion": "Diabetes mellitus tipo 2", "tipo": "PRINCIPAL"}],
-        "tecnologias": []
+        "tecnologias": [],
+        "estado": "Atendido"
     })
 
-    # Evento de auditoría génesis
     audit_ledger.add_event("SYSTEM", "SISTEMA", "INICIALIZACION", "PLATAFORMA", "EXITOSO")
 
 init_seed_data()
@@ -1085,6 +1101,28 @@ async def serve_ui():
                 </button>
             </form>
 
+            <div class="mt-4 pt-3 border-top">
+                <label class="small text-muted fw-bold mb-2 d-block text-center">Acceso Rápido por Rol (Las Cuatro Vistas):</label>
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-outline-primary btn-sm text-start d-flex justify-content-between align-items-center" onclick="cargarCredenciales('admision_sincelejo', 'admision123')">
+                        <span><i class="fa-solid fa-hospital-user me-2"></i> <strong>Admisionista</strong> (Triage y Envío al Bus)</span>
+                        <span class="badge bg-primary">admision_sincelejo</span>
+                    </button>
+                    <button type="button" class="btn btn-outline-success btn-sm text-start d-flex justify-content-between align-items-center" onclick="cargarCredenciales('medico_ruiz', 'medico123')">
+                        <span><i class="fa-solid fa-user-doctor me-2"></i> <strong>Médico</strong> (Consulta, CIE-10 y Egreso)</span>
+                        <span class="badge bg-success">medico_ruiz</span>
+                    </button>
+                    <button type="button" class="btn btn-outline-info text-dark btn-sm text-start d-flex justify-content-between align-items-center" onclick="cargarCredenciales('paciente1001', 'paciente123')">
+                        <span><i class="fa-solid fa-user me-2"></i> <strong>Paciente</strong> (Historia Unificada & Bundle)</span>
+                        <span class="badge bg-info text-dark">paciente1001</span>
+                    </button>
+                    <button type="button" class="btn btn-outline-dark btn-sm text-start d-flex justify-content-between align-items-center" onclick="cargarCredenciales('auditor_calidad', 'auditor123')">
+                        <span><i class="fa-solid fa-shield-halved me-2"></i> <strong>Reporte HC / Auditor</strong> (Tablero e Integridad)</span>
+                        <span class="badge bg-dark">auditor_calidad</span>
+                    </button>
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -1374,8 +1412,33 @@ async def serve_ui():
                             </div>
                         </div>
 
+                        <!-- SECCIÓN 3: EGRESO CLÍNICO Y SELLO DE INTEGRIDAD -->
+                        <div class="form-section-title">Egreso Asistencial y Cierre de Episodio</div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label-custom">Destino / Condición de Egreso</label>
+                                <select class="form-select form-select-custom" id="regDestinoEgreso">
+                                    <option value="Alta médica con tratamiento ambulatorio" selected>Alta médica con tratamiento ambulatorio</option>
+                                    <option value="Hospitalización en piso / observación">Hospitalización en piso / observación</option>
+                                    <option value="Remisión a IPS de mayor complejidad">Remisión a IPS de mayor complejidad</option>
+                                    <option value="Contra-remisión a centro de origen">Contra-remisión a centro de origen</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label-custom">Conducta y Plan de Manejo</label>
+                                <input type="text" class="form-control form-control-custom" id="regPlanManejo" placeholder="Plan de manejo terapéutico y farmacológico" value="Seguimiento ambulatorio con adherencia farmacológica">
+                            </div>
+                        </div>
+
+                        <div class="alert alert-light border small text-muted mb-4 d-flex align-items-center">
+                            <i class="fa-solid fa-stamp text-primary fs-4 me-3"></i>
+                            <div>
+                                <strong>Sello de Integridad del Egreso (Fase 4):</strong> Al guardar, el HSB generará automáticamente un hash SHA-256 encadenado que sella inmutablemente el alta médica y lo persiste en la tabla <code>evento_auditoria</code>.
+                            </div>
+                        </div>
+
                         <button type="submit" id="btnGuardarRegistro" class="btn btn-primary w-100 py-3 fw-bold fs-6 shadow-sm">
-                            <i class="fa-solid fa-floppy-disk me-2"></i> Guardar Registro Médico en HSB / FHIR R4
+                            <i class="fa-solid fa-floppy-disk me-2"></i> Guardar Atención, Registrar Egreso y Sellar en HSB
                         </button>
                     </form>
                 </div>
@@ -1398,10 +1461,46 @@ async def serve_ui():
 
                     <div class="card p-4 border-0 shadow-sm">
                         <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h5 class="fw-bold mb-0" id="historialNombrePaciente">Paciente: Carlos Perez (CC 1001)</h5>
-                            <span class="badge bg-success" id="historialCoberturaBadge">Cobertura FHIR: 100%</span>
+                            <div>
+                                <h5 class="fw-bold mb-0" id="historialNombrePaciente">Paciente: Carlos Perez (CC 1001)</h5>
+                                <small class="text-muted"><i class="fa-solid fa-network-wired me-1"></i> Expediente Clínico Unificado (Sincelejo, Cartagena, Corozal)</small>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <span class="badge bg-success align-self-center" id="historialCoberturaBadge">Cobertura FHIR: 100%</span>
+                                <button type="button" class="btn btn-outline-success btn-sm" onclick="descargarBundlePaciente()">
+                                    <i class="fa-solid fa-download me-1"></i> Descargar Bundle FHIR R4
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="window.print()">
+                                    <i class="fa-solid fa-print me-1"></i> Imprimir / PDF
+                                </button>
+                            </div>
                         </div>
                         <div id="historialTimeline"></div>
+
+                        <!-- SECCIÓN EXCLUSIVA VISTA PACIENTE: AUDITORÍA DE ACCESOS -->
+                        <div id="secAccesosPaciente" class="mt-4 pt-3 border-top">
+                            <h6 class="fw-bold text-secondary mb-2">
+                                <i class="fa-solid fa-user-shield me-2"></i> Quién ha accedido a mi Historia Clínica (Trazabilidad y Transparencia)
+                            </h6>
+                            <p class="small text-muted mb-2">Registro de auditoría inmutable en el HSB que documenta cada consulta asistencial a sus datos de salud:</p>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover align-middle mb-0" style="font-size: 0.82rem;">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Fecha y Hora</th>
+                                            <th>Profesional / Actor</th>
+                                            <th>Rol</th>
+                                            <th>Acción Realizada</th>
+                                            <th>Resultado</th>
+                                            <th>Sello SHA-256</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tablaAccesosPacienteBody">
+                                        <tr><td colspan="6" class="text-center text-muted small py-2"><i class="fa-solid fa-spinner fa-spin me-1"></i> Consultando registros de acceso...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -1518,8 +1617,14 @@ async def serve_ui():
                                     <div id="collapseOne" class="accordion-collapse collapse show" aria-labelledby="headingOne" data-bs-parent="#accordionAdmision">
                                         <div class="accordion-body bg-white p-4">
                                             <div class="mb-3">
-                                                <label class="form-label small fw-semibold">ID del Paciente (PID)</label>
-                                                <input type="text" class="form-control" id="admPid" placeholder="Ingrese el ID del paciente" required>
+                                                <label class="form-label small fw-semibold">ID del Paciente (PID / Documento)</label>
+                                                <div class="input-group">
+                                                    <input type="text" class="form-control" id="admPid" placeholder="Ingrese el ID del paciente (ej: 1001, 2005)" onblur="verificarDuplicadoSedes()" required>
+                                                    <button type="button" class="btn btn-outline-primary" onclick="verificarDuplicadoSedes()">
+                                                        <i class="fa-solid fa-magnifying-glass me-1"></i> Detectar Duplicado en Sedes
+                                                    </button>
+                                                </div>
+                                                <div id="duplicadoAlertBox" class="d-none mt-2"></div>
                                             </div>
                                             <div class="mb-3">
                                                 <label class="form-label small fw-semibold">Nombre del Paciente</label>
@@ -1823,6 +1928,9 @@ async def serve_ui():
                 // Paciente solo ve la consulta de su propio historial
                 document.getElementById('menuConsultarHistorial').classList.remove('d-none');
                 document.getElementById('searchDocInput').value = currentAuth.documento || '1001';
+                document.getElementById('searchDocInput').readOnly = true;
+                const searchBtn = document.querySelector('#secConsultarHistorial .btn-primary');
+                if (searchBtn) searchBtn.classList.add('d-none');
                 navegarSeccion('consultar');
             }
         }
@@ -1895,6 +2003,8 @@ async def serve_ui():
                     <small class="text-muted"><i class="fa-solid fa-network-wired me-1"></i> Notificado a la sala de espera del médico, persistido en PostgreSQL y normalizado en FHIR R4.</small>
                 `;
                 box.scrollIntoView({ behavior: 'smooth' });
+                cargarPacientesAsignadosMedico();
+                cargarListadoPacientes();
                 
                 document.getElementById('admPid').value = '';
                 document.getElementById('admNombre').value = '';
@@ -1949,7 +2059,7 @@ DG1|1||${cie10}^Diagnostico^I10||20261108|A`;
                 const res = await fetch('/hsb/hl7', {
                     method: 'POST',
                     body: hl7,
-                    headers: { 'Content-Type': 'text/plain' }
+                    headers: { 'Content-Type': 'text/plain', ...getAuthHeaders() }
                 });
                 const data = await res.json();
                 
@@ -1957,6 +2067,8 @@ DG1|1||${cie10}^Diagnostico^I10||20261108|A`;
                 box.classList.remove('d-none');
                 box.innerHTML = `<i class="fa-solid fa-circle-check me-2"></i> <strong>Registro Guardado con Éxito:</strong> Paciente CC ${doc} (${nombre} ${apellido}) integrado en Sede ${sede}. Estado HSB: <code>${data.estado}</code> • Recurso FHIR: <code>Patient/pac-${doc}</code>.`;
                 box.scrollIntoView({ behavior: 'smooth' });
+                cargarPacientesAsignadosMedico();
+                cargarListadoPacientes();
             } catch (e) {
                 alert('Error al guardar en el bus HSB');
                 console.error(e);
@@ -1978,6 +2090,7 @@ DG1|1||${cie10}^Diagnostico^I10||20261108|A`;
                 const data = await res.json();
                 document.getElementById('historialNombrePaciente').innerText = `Paciente: ${data.paciente.nombre} ${data.paciente.apellido} (CC ${data.paciente.documento})`;
                 document.getElementById('historialCoberturaBadge').innerText = `Cobertura FHIR: ${data.cobertura_fhir}`;
+                cargarAuditoriaAccesosPaciente(doc);
                 
                 const deg = document.getElementById('degradacionAlert');
                 if (data.degradacion_tolerante) deg.classList.remove('d-none');
@@ -2071,6 +2184,240 @@ DG1|1||${cie10}^Diagnostico^I10||20261108|A`;
             alert('Registro 1 de auditoría alterado deliberadamente. Presione Re-verificar para ver la detección.');
             verificarAuditoria();
         }
+    
+        // GESTIÓN DE PACIENTES ASIGNADOS AL MÉDICO (SALA DE ESPERA)
+        async function cargarPacientesAsignadosMedico() {
+            const container = document.getElementById('listaPacientesAsignados');
+            if (!container) return;
+            container.innerHTML = '<span class="text-muted small"><i class="fa-solid fa-spinner fa-spin me-1"></i> Consultando sala de espera y pacientes asignados...</span>';
+            try {
+                const res = await fetch('/api/pacientes');
+                if (!res.ok) {
+                    container.innerHTML = '<span class="text-danger small">No se pudo cargar la sala de espera.</span>';
+                    return;
+                }
+                const pacientes = await res.json();
+                
+                // Pacientes en espera o admitidos con triage
+                const lista = pacientes.filter(p => p.triage || (p.estado && p.estado.toLowerCase().includes('espera')));
+                
+                if (!lista || lista.length === 0) {
+                    container.innerHTML = `
+                        <div class="alert alert-light border small text-muted py-2 mb-0">
+                            <i class="fa-solid fa-circle-info me-2"></i> No hay pacientes en sala de espera en este momento. Admita un nuevo paciente desde el rol de <strong>Admisionista</strong> para verlo aquí en tiempo real.
+                        </div>
+                    `;
+                    return;
+                }
+
+                let html = `
+                    <table class="table table-sm table-hover align-middle mb-0" style="font-size: 0.85rem;">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Doc</th>
+                                <th>Paciente</th>
+                                <th>Triage</th>
+                                <th>Motivo de Admisión</th>
+                                <th>Sede</th>
+                                <th>Médico Asignado</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                lista.forEach(p => {
+                    let triageBadge = '<span class="badge bg-secondary">T3</span>';
+                    if (p.triage === '1') triageBadge = '<span class="badge bg-danger"><i class="fa-solid fa-triangle-exclamation me-1"></i> T1 - Reanimación</span>';
+                    else if (p.triage === '2') triageBadge = '<span class="badge bg-warning text-dark"><i class="fa-solid fa-triangle-exclamation me-1"></i> T2 - Emergencia</span>';
+                    else if (p.triage === '3') triageBadge = '<span class="badge bg-info text-dark">T3 - Urgencia</span>';
+                    else if (p.triage === '4') triageBadge = '<span class="badge bg-success">T4 - Prioritario</span>';
+                    else if (p.triage === '5') triageBadge = '<span class="badge bg-secondary">T5 - No Urgente</span>';
+
+                    const sedesStr = (p.sedes || []).join(', ') || 'Sincelejo';
+
+                    html += `
+                        <tr>
+                            <td><strong>${p.documento}</strong></td>
+                            <td>${p.nombre} ${p.apellido}</td>
+                            <td>${triageBadge}</td>
+                            <td><span class="text-truncate d-inline-block" style="max-width: 200px;" title="${p.motivo || ''}">${p.motivo || 'Admisión asistencial'}</span></td>
+                            <td><span class="badge bg-light text-dark border">${sedesStr}</span></td>
+                            <td><span class="text-primary fw-semibold">${p.medico_asignado || 'Dr. Mateo Ruiz'}</span></td>
+                            <td>
+                                <button type="button" class="btn btn-sm btn-primary py-0 px-2 shadow-sm" onclick="cargarDatosPacienteEnFormulario('${p.documento}', '${p.nombre}', '${p.apellido}', '${p.nacimiento}', '${p.sexo}', '${p.sedes ? p.sedes[0] : '1'}')">
+                                    <i class="fa-solid fa-stethoscope me-1"></i> Atender
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+
+                html += `</tbody></table>`;
+                container.innerHTML = html;
+            } catch (e) {
+                console.error(e);
+                container.innerHTML = '<span class="text-danger small">Error de conexión al cargar la sala de espera.</span>';
+            }
+        }
+
+        // CARGA DEL LISTADO DE PACIENTES FEDERADOS
+        async function cargarListadoPacientes() {
+            const tbody = document.getElementById('tablaListadoPacientesBody');
+            if (!tbody) return;
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted small py-3"><i class="fa-solid fa-spinner fa-spin me-2"></i> Cargando pacientes federados en las 3 sedes...</td></tr>';
+            try {
+                const res = await fetch('/api/pacientes');
+                if (!res.ok) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger small py-3">Error al consultar pacientes federados.</td></tr>';
+                    return;
+                }
+                const pacientes = await res.json();
+                if (!pacientes || pacientes.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted small py-3">No hay pacientes registrados en el sistema.</td></tr>';
+                    return;
+                }
+                let html = '';
+                pacientes.forEach(p => {
+                    const sedesHtml = (p.sedes || ['Sincelejo']).map(s => `<span class="badge bg-secondary me-1"><i class="fa-solid fa-location-dot me-1"></i>${s}</span>`).join('');
+                    const fhirHtml = `<span class="badge bg-success"><i class="fa-solid fa-circle-check me-1"></i> ${p.fhir_patient_id || ('pac-' + p.documento)}</span>`;
+                    const isDoctor = currentAuth && currentAuth.rol === 'medico';
+                    const atenderBtn = isDoctor ? `
+                        <button class="btn btn-sm btn-outline-success py-0 px-2" onclick="atenderPacienteDesdeListado('${p.documento}', '${p.nombre}', '${p.apellido}', '${p.nacimiento}', '${p.sexo}', '${p.sedes ? p.sedes[0] : '1'}')">
+                            <i class="fa-solid fa-stethoscope me-1"></i> Atender
+                        </button>` : '';
+
+                    html += `
+                        <tr>
+                            <td><strong class="text-primary">${p.tipo_documento || 'CC'} ${p.documento}</strong></td>
+                            <td><strong>${p.nombre} ${p.apellido}</strong><br><small class="text-muted"><i class="fa-solid fa-calendar me-1"></i>${p.nacimiento} • ${p.sexo === 'M' ? 'Masculino' : 'Femenino'}</small></td>
+                            <td>${sedesHtml}</td>
+                            <td>${fhirHtml}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1" onclick="cargarPacienteConsulta('${p.documento}')" title="Ver Historia Clínica Unificada">
+                                    <i class="fa-solid fa-file-medical me-1"></i> Historia
+                                </button>
+                                ${atenderBtn}
+                            </td>
+                        </tr>
+                    `;
+                });
+                tbody.innerHTML = html;
+            } catch (e) {
+                console.error(e);
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger small py-3">Error de comunicación con el backend HSB.</td></tr>';
+            }
+        }
+
+        // AUTO-LLENADO DE FORMULARIO DE CONSULTA / REGISTRO MÉDICO
+        function cargarDatosPacienteEnFormulario(doc, nombre, apellido, nacimiento, sexo, sedeNombre) {
+            if (document.getElementById('regDoc')) document.getElementById('regDoc').value = doc;
+            if (document.getElementById('regNombre')) document.getElementById('regNombre').value = nombre;
+            if (document.getElementById('regApellido')) document.getElementById('regApellido').value = apellido;
+            if (document.getElementById('regNacimiento')) document.getElementById('regNacimiento').value = nacimiento || '1990-01-01';
+            if (document.getElementById('regSexo')) document.getElementById('regSexo').value = sexo || 'M';
+            
+            let sedeVal = '1';
+            if (sedeNombre && sedeNombre.toString().toLowerCase().includes('cartagena')) sedeVal = '2';
+            else if (sedeNombre && sedeNombre.toString().toLowerCase().includes('corozal')) sedeVal = '3';
+            if (document.getElementById('regSede')) document.getElementById('regSede').value = sedeVal;
+
+            const form = document.getElementById('formCrearRegistroMedico');
+            if (form) {
+                form.scrollIntoView({ behavior: 'smooth' });
+            }
+        }
+
+        function atenderPacienteDesdeListado(doc, nombre, apellido, nacimiento, sexo, sedeNombre) {
+            navegarSeccion('crear');
+            setTimeout(() => {
+                cargarDatosPacienteEnFormulario(doc, nombre, apellido, nacimiento, sexo, sedeNombre);
+            }, 100);
+        }
+
+    
+        // VERIFICAR DUPLICADOS ENTRE SEDES (VISTA ADMISIONISTA)
+        async function verificarDuplicadoSedes() {
+            const pid = document.getElementById('admPid').value.trim();
+            const alertBox = document.getElementById('duplicadoAlertBox');
+            if (!pid || !alertBox) return;
+
+            alertBox.classList.remove('d-none');
+            alertBox.className = 'alert alert-info py-2 small mb-2';
+            alertBox.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Consultando presencia del paciente en las 3 sedes...';
+
+            try {
+                const res = await fetch('/api/pacientes');
+                if (!res.ok) {
+                    alertBox.className = 'alert alert-secondary py-2 small mb-2';
+                    alertBox.innerHTML = 'No se pudo verificar el historial previo en sedes.';
+                    return;
+                }
+                const pacientes = await res.json();
+                const found = pacientes.find(p => p.documento === pid);
+                if (found) {
+                    const sedesStr = (found.sedes || []).join(', ') || 'Sincelejo';
+                    alertBox.className = 'alert alert-warning py-2 small mb-2';
+                    alertBox.innerHTML = `
+                        <i class="fa-solid fa-triangle-exclamation text-warning me-1"></i> 
+                        <strong>Paciente Encontrado en la Red:</strong> <code>${found.documento}</code> - <strong>${found.nombre} ${found.apellido}</strong> (Registrado en: <strong>${sedesStr}</strong>).<br>
+                        <small>Datos demográficos precargados. Se abrirá la nueva atención asistencial con triage en la sede seleccionada sin duplicar demografía.</small>
+                    `;
+                    document.getElementById('admNombre').value = found.nombre;
+                    document.getElementById('admApellido').value = found.apellido;
+                    if (found.nacimiento) document.getElementById('admNacimiento').value = found.nacimiento;
+                    if (found.sexo) document.getElementById('admGenero').value = found.sexo;
+                } else {
+                    alertBox.className = 'alert alert-success py-2 small mb-2';
+                    alertBox.innerHTML = `<i class="fa-solid fa-circle-check text-success me-1"></i> <strong>Paciente Nuevo en la Red:</strong> No registra atenciones previas en ninguna sede. Ingrese los datos demográficos completos para crear su registro inicial.`;
+                }
+            } catch (e) {
+                console.error(e);
+                alertBox.className = 'alert alert-secondary py-2 small mb-2';
+                alertBox.innerHTML = 'Error de conexión al consultar sedes.';
+            }
+        }
+
+        // DESCARGAR BUNDLE FHIR R4
+        function descargarBundlePaciente() {
+            const doc = document.getElementById('searchDocInput').value.trim() || '1001';
+            window.open(`/paciente/${doc}/bundle`, '_blank');
+        }
+
+        // CARGAR REGISTROS DE AUDITORÍA DE ACCESOS A LA HISTORIA DEL PACIENTE
+        async function cargarAuditoriaAccesosPaciente(doc) {
+            const tbody = document.getElementById('tablaAccesosPacienteBody');
+            if (!tbody) return;
+            try {
+                const res = await fetch('/audit/events');
+                if (!res.ok) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted small py-2">No disponible</td></tr>';
+                    return;
+                }
+                const data = await res.json();
+                const eventos = (data.eventos || []).filter(e => e.recurso && (e.recurso.includes(doc) || e.recurso.includes('HISTORIA')));
+                
+                if (eventos.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted small py-2">Sin accesos asistenciales registrados recientemente.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = eventos.map(e => `
+                    <tr>
+                        <td><code>${e.timestamp}</code></td>
+                        <td><strong>${e.actor}</strong></td>
+                        <td><span class="badge bg-secondary">${e.rol}</span></td>
+                        <td><code>${e.accion}</code></td>
+                        <td><span class="badge bg-success">${e.resultado}</span></td>
+                        <td><code class="text-muted" style="font-size: 0.75rem;">${(e.hash_actual || '').substring(0, 16)}...</code></td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                console.error(e);
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger small py-2">Error cargando auditoría de accesos.</td></tr>';
+            }
+        }
+
     </script>
 </body>
 </html>"""

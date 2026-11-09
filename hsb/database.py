@@ -358,6 +358,9 @@ def guardar_mensaje_bus(
     """
     Guarda o actualiza el estado de un mensaje en la tabla mensaje_bus de PostgreSQL.
     """
+    if not PSYCOPG2_AVAILABLE:
+        return False
+
     conn = get_db_connection(id_sede)
     if not conn:
         return False
@@ -392,6 +395,9 @@ def load_processed_messages_from_db() -> Dict[str, Any]:
     """
     Carga todos los mensajes procesados históricamente desde PostgreSQL al iniciar el HSB.
     """
+    if not PSYCOPG2_AVAILABLE:
+        return {}
+
     processed = {}
     for s_id in (1, 2, 3):
         conn = get_db_connection(s_id)
@@ -421,6 +427,9 @@ def persist_audit_event_to_db(event: Dict[str, Any]) -> bool:
     """
     Guarda un eslabón de la auditoría en la tabla evento_auditoria de PostgreSQL.
     """
+    if not PSYCOPG2_AVAILABLE:
+        return False
+
     for s_id in (1, 2, 3):
         conn = get_db_connection(s_id)
         if not conn:
@@ -458,6 +467,9 @@ def load_audit_events_from_db() -> List[Dict[str, Any]]:
     """
     Recupera los eventos de auditoría almacenados en PostgreSQL al iniciar el HSB.
     """
+    if not PSYCOPG2_AVAILABLE:
+        return []
+
     events = []
     for s_id in (1, 2, 3):
         conn = get_db_connection(s_id)
