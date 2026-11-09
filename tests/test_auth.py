@@ -10,8 +10,10 @@ class TestAuthSecurity(unittest.TestCase):
     def test_01_hash_password_sha256(self):
         pw = "medico123"
         h = hash_password(pw)
-        self.assertEqual(len(h), 64)
-        self.assertEqual(h, USUARIOS_PRUEBA["medico_ruiz"]["password_hash"])
+        self.assertTrue(h.startswith("pbkdf2:sha256:100000$"))
+        self.assertTrue(verify_password(pw, h))
+        stored_hash = USUARIOS_PRUEBA["medico_ruiz"]["password_hash"]
+        self.assertTrue(verify_password(pw, stored_hash))
 
     def test_02_verify_password_valido_e_invalido(self):
         stored_hash = USUARIOS_PRUEBA["medico_ruiz"]["password_hash"]

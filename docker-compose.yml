@@ -6,18 +6,18 @@ services:
     image: postgres:15-alpine
     container_name: pg_sede1
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: historia_clinica_sede1
     ports:
-      - "5431:5432"
+      - "${SEDE1_PORT:-5431}:5432"
     volumes:
       - sede1_data:/var/lib/postgresql/data
       - ./db/init_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
       - ./db/catalogs.sql:/docker-entrypoint-initdb.d/02_catalogs.sql
       - ./db/seed_sede1.sql:/docker-entrypoint-initdb.d/03_seed.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d historia_clinica_sede1"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d historia_clinica_sede1"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -29,18 +29,18 @@ services:
     image: postgres:15-alpine
     container_name: pg_sede2
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: historia_clinica_sede2
     ports:
-      - "5432:5432"
+      - "${SEDE2_PORT:-5432}:5432"
     volumes:
       - sede2_data:/var/lib/postgresql/data
       - ./db/init_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
       - ./db/catalogs.sql:/docker-entrypoint-initdb.d/02_catalogs.sql
       - ./db/seed_sede2.sql:/docker-entrypoint-initdb.d/03_seed.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d historia_clinica_sede2"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d historia_clinica_sede2"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -52,18 +52,18 @@ services:
     image: postgres:15-alpine
     container_name: pg_sede3
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: historia_clinica_sede3
     ports:
-      - "5433:5432"
+      - "${SEDE3_PORT:-5433}:5432"
     volumes:
       - sede3_data:/var/lib/postgresql/data
       - ./db/init_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
       - ./db/catalogs.sql:/docker-entrypoint-initdb.d/02_catalogs.sql
       - ./db/seed_sede3.sql:/docker-entrypoint-initdb.d/03_seed.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d historia_clinica_sede3"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d historia_clinica_sede3"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -75,7 +75,7 @@ services:
     image: hapiproject/hapi:v6.8.0
     container_name: hapi_fhir
     ports:
-      - "8090:8080"
+      - "${HAPI_PORT:-8090}:8080"
     environment:
       hapi.fhir.fhir_version: R4
     healthcheck:
@@ -93,13 +93,18 @@ services:
       dockerfile: hsb/Dockerfile
     container_name: hsb_service
     ports:
-      - "8000:8000"
+      - "${HSB_PORT:-8000}:8000"
     environment:
-      SEDE1_URL: postgresql://postgres:postgrespassword@pg_sede1:5432/historia_clinica_sede1
-      SEDE2_URL: postgresql://postgres:postgrespassword@pg_sede2:5432/historia_clinica_sede2
-      SEDE3_URL: postgresql://postgres:postgrespassword@pg_sede3:5432/historia_clinica_sede3
+      SEDE1_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@pg_sede1:5432/historia_clinica_sede1
+      SEDE2_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@pg_sede2:5432/historia_clinica_sede2
+      SEDE3_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@pg_sede3:5432/historia_clinica_sede3
       HAPI_FHIR_URL: http://hapi_fhir:8080/fhir
-      JWT_SECRET: super_secret_clinical_key_2026
+      JWT_SECRET: ${JWT_SECRET:-super_secret_clinical_interoperability_key_2026}
+      HSB_API_KEY: ${HSB_API_KEY:-hsb_clinical_ingest_key_2026}
+      MEDICO_PASSWORD: ${MEDICO_PASSWORD:-medico123}
+      ADMISION_PASSWORD: ${ADMISION_PASSWORD:-admision123}
+      AUDITOR_PASSWORD: ${AUDITOR_PASSWORD:-auditor123}
+      PACIENTE_PASSWORD: ${PACIENTE_PASSWORD:-paciente123}
     depends_on:
       pg_sede1:
         condition: service_healthy

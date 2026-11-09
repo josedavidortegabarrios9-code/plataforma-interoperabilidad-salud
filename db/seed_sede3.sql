@@ -34,3 +34,10 @@ ON CONFLICT DO NOTHING;
 INSERT INTO diagnostico (id_atencion, cod_cie10, momento, tipo, fhir_condition_id)
 VALUES (202, 'J18.9', 'INGRESO', 'PRINCIPAL', NULL)
 ON CONFLICT DO NOTHING;
+
+-- Sincronizar contadores de secuencias SERIAL para evitar colisiones en inserciones posteriores
+SELECT setval('usuario_id_usuario_seq', COALESCE((SELECT MAX(id_usuario) FROM usuario), 1));
+SELECT setval('atencion_id_atencion_seq', COALESCE((SELECT MAX(id_atencion) FROM atencion), 1));
+SELECT setval('profesional_salud_id_profesional_seq', COALESCE((SELECT MAX(id_profesional) FROM profesional_salud), 1));
+SELECT setval('diagnostico_id_diagnostico_seq', COALESCE((SELECT MAX(id_diagnostico) FROM diagnostico), 1));
+SELECT setval('tecnologia_salud_id_tecnologia_seq', COALESCE((SELECT MAX(id_tecnologia) FROM tecnologia_salud), 1));

@@ -24,8 +24,16 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from hsb.parser import HL7Parser, CSVParser
 from fhir.normalizer import FHIRNormalizer
 from hsb.audit import audit_ledger
-from hsb.database import fetch_atenciones_sede, persist_atencion_sede
-from hsb.auth import JWTManager, require_role, USUARIOS_PRUEBA, ACTIVE_2FA_CODES, verify_password
+from hsb.database import (
+    fetch_atenciones_sede, persist_atencion_sede, check_sede_alive,
+    check_mensaje_bus, guardar_mensaje_bus, load_processed_messages_from_db,
+    load_audit_events_from_db
+)
+from hsb.auth import (
+    JWTManager, require_role, USUARIOS_PRUEBA, ACTIVE_2FA_CODES,
+    verify_password, generate_2fa_code, verify_hsb_ingest_auth
+)
+from collections import deque
 
 app = FastAPI(
     title="Health Service Bus (HSB) - Plataforma de Interoperabilidad Clínica",
@@ -119,27 +127,64 @@ def init_seed_data():
 
 init_seed_data()
 
+
+
+# Recuperar estado persistente desde PostgreSQL (idempotencia y auditoría tras reinicios)
+
+try:
+
+    db_msgs = load_processed_messages_from_db()
+
+    processed_messages.update(db_msgs)
+
+    db_audits = load_audit_events_from_db()
+
+    if db_audits:
+
+        audit_ledger.load_from_db(db_audits)
+
+except Exception:
+
+    pass
+
+
+async def check_hapi_alive() -> bool:
+    """Verifica físicamente si el servidor HAPI FHIR responde solicitudes HTTP."""
+    if os.getenv("HAPI_DOWN", "false").lower() == "true":
+        return False
+    if os.getenv("TEST_MODE", "false").lower() == "true":
+        return True
+    try:
+        base_url = HAPI_FHIR_URL.rstrip('/')
+        async with httpx.AsyncClient(timeout=1.5) as client:
+            res = await client.get(f"{base_url}/metadata")
+            return res.status_code == 200
+    except Exception:
+        return False
+
 # --------------------------------------------------------------------------
 # Funciones de Soporte y Orquestación Downstream
 # --------------------------------------------------------------------------
 async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) -> Tuple[bool, str]:
     """
     Envía un Bundle a HAPI FHIR con reintentos y retroceso exponencial.
-    Si HAPI FHIR está apagado, reintenta; si agota los intentos, devuelve False.
+    Si HAPI FHIR está apagado o no responde, reintenta y devuelve False.
     """
     if os.getenv("HAPI_DOWN", "false").lower() == "true":
         return False, "Servidor HAPI FHIR apagado para prueba de resiliencia"
-    if os.getenv("TEST_MODE", "false").lower() == "true":
+
+    if os.getenv("TEST_MODE", "false").lower() == "true" and os.getenv("TEST_REAL_HAPI", "false").lower() != "true":
         return True, "Entregado a HAPI FHIR (Test Mode)"
 
     delay = 0.5
     base_url = HAPI_FHIR_URL.rstrip('/')
     endpoints_to_try = [base_url, f"{base_url}/Bundle"]
+    last_err = "Servidor no responde"
 
     for attempt in range(1, max_retries + 1):
         for ep in endpoints_to_try:
             try:
-                async with httpx.AsyncClient(timeout=3.0) as client:
+                async with httpx.AsyncClient(timeout=2.0) as client:
                     res = await client.post(
                         ep,
                         json=bundle,
@@ -147,24 +192,32 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
                     )
                     if res.status_code in (200, 201):
                         return True, "Entregado a HAPI FHIR"
-            except Exception:
-                pass
+            except Exception as e:
+                last_err = str(e)
         await asyncio.sleep(delay)
         delay *= 1.5
 
-    return False, f"Servidor HAPI FHIR no disponible tras {max_retries} intentos"
+    return False, f"Servidor HAPI FHIR no disponible tras {max_retries} intentos: {last_err}"
 
 # --------------------------------------------------------------------------
 # Puertas de Ingesta (RF1, RF2, RF3)
 # --------------------------------------------------------------------------
 @app.post("/hsb/hl7")
-async def ingest_hl7(request: Request):
+async def ingest_hl7(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+    x_rol: Optional[str] = Header(None)
+):
     """
     Ingesta de mensajes HL7 v2 en texto plano (ADT^A01 y ORU^R01).
-    Valida sintaxis, terminologías, garantiza idempotencia y envía a HAPI FHIR.
+    Valida autenticación obligatoria, sintaxis, idempotencia persistente en PostgreSQL y HAPI FHIR con DLQ.
     """
+    auth_user = verify_hsb_ingest_auth(authorization, x_api_key, x_rol)
+
     start_time = time.time()
     performance_metrics["total_recibidos"] += 1
+    timestamps_recibidos.append(start_time)
     raw_body = (await request.body()).decode("utf-8", errors="replace")
 
     if not raw_body.strip():
@@ -174,7 +227,7 @@ async def ingest_hl7(request: Request):
     data, reasons = HL7Parser.validate_and_extract_hl7(raw_body)
     if reasons:
         performance_metrics["rechazados"] += 1
-        audit_ledger.add_event("HSB_INGEST", "SISTEMA", "VALIDAR_HL7", "MENSAJE_RAW", f"RECHAZADO: {', '.join(reasons)}")
+        audit_ledger.add_event("HSB_INGEST", auth_user.get("rol", "SISTEMA"), "VALIDAR_HL7", "MENSAJE_RAW", f"RECHAZADO: {', '.join(reasons)}")
         return JSONResponse(
             status_code=422,
             content={
@@ -184,13 +237,14 @@ async def ingest_hl7(request: Request):
             }
         )
 
-    # 2. Verificación de Idempotencia (MSH-10 o Hash de Payload)
+    # 2. Verificación de Idempotencia Persistente (mensaje_bus en PostgreSQL + memoria)
     msg_id = data["id_mensaje"]
     payload_hash = hashlib.sha256(raw_body.encode("utf-8")).hexdigest()
 
-    if msg_id in processed_messages or payload_hash in processed_messages:
+    msg_previo_db = check_mensaje_bus(msg_id, payload_hash)
+    if msg_previo_db or msg_id in processed_messages or payload_hash in processed_messages:
         performance_metrics["duplicados"] += 1
-        audit_ledger.add_event("HSB_IDEMPOTENCY", "SISTEMA", "REINTENTO_HL7", f"MSG_{msg_id}", "DUPLICADO")
+        audit_ledger.add_event("HSB_IDEMPOTENCY", auth_user.get("rol", "SISTEMA"), "REINTENTO_HL7", f"MSG_{msg_id}", "DUPLICADO")
         return {
             "estado": "duplicado",
             "id_mensaje": msg_id,
@@ -223,11 +277,10 @@ async def ingest_hl7(request: Request):
 
     bundle = FHIRNormalizer.build_transaction_bundle(resources)
 
-    # 4. Envío a HAPI FHIR con Reintentos y Gestión de Fallos (DLQ)
+    # 4. Envío a HAPI FHIR con Reintentos y Gestión Incondicional de Fallos (DLQ)
     success, detail = await send_to_hapi_with_retry(bundle)
 
-    if not success and os.getenv("HAPI_DOWN", "false").lower() == "true":
-        # Caso explícito de prueba de caída de HAPI: enviar a Cola de Mensajes Muertos
+    if not success:
         performance_metrics["muertos_dlq"] += 1
         dead_entry = {
             "id_mensaje": msg_id,
@@ -238,13 +291,14 @@ async def ingest_hl7(request: Request):
             "motivo_muerte": detail
         }
         dead_letter_queue.append(dead_entry)
-        audit_ledger.add_event("HSB_ROUTER", "SISTEMA", "ENTREGA_FHIR", f"MSG_{msg_id}", "MUERTO_DLQ")
+        guardar_mensaje_bus(msg_id, "HL7 v2", data["sede"], payload_hash, "MUERTO_DLQ", raw_body)
+        audit_ledger.add_event("HSB_ROUTER", auth_user.get("rol", "SISTEMA"), "ENTREGA_FHIR", f"MSG_{msg_id}", "MUERTO_DLQ")
         return JSONResponse(
             status_code=503,
             content={
                 "estado": "muerto",
                 "id_mensaje": msg_id,
-                "mensaje": f"Mensaje no pudo entregarse y fue desviado a la cola de mensajes muertos (DLQ): {detail}"
+                "mensaje": f"Mensaje no pudo entregarse a HAPI FHIR tras reintentos y fue desviado a la cola de mensajes muertos (DLQ): {detail}"
             }
         )
 
@@ -276,7 +330,7 @@ async def ingest_hl7(request: Request):
 
     # Persistencia en PostgreSQL de la sede destino (RF4 - BD Distribuidas con Volúmenes Docker)
     obs_info = data.get("observacion") or {}
-    persist_atencion_sede(
+    db_saved, db_info = persist_atencion_sede(
         sede_id=data["sede"],
         documento=doc,
         nombre=data["nombre"],
@@ -293,7 +347,19 @@ async def ingest_hl7(request: Request):
         loinc_unit=obs_info.get("unidad")
     )
 
-    # Registrar en memoria de idempotencia
+    if check_sede_alive(data["sede"]) and not db_saved:
+        performance_metrics["rechazados"] += 1
+        audit_ledger.add_event("HSB_ROUTER", auth_user.get("rol", "SISTEMA"), "PERSISTENCIA_DB", f"MSG_{msg_id}", f"FALLIDO: {db_info}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "estado": "fallido",
+                "id_mensaje": msg_id,
+                "motivo": f"Fallo en persistencia de base de datos en Sede {data['sede']}: {db_info}"
+            }
+        )
+
+    guardar_mensaje_bus(msg_id, "HL7 v2", data["sede"], payload_hash, "entregado", raw_body, bundle)
     processed_messages[msg_id] = {"timestamp": time.time(), "doc": doc, "sede": data["sede"]}
     processed_messages[payload_hash] = processed_messages[msg_id]
 
@@ -301,7 +367,7 @@ async def ingest_hl7(request: Request):
     latency = (time.time() - start_time) * 1000
     performance_metrics["tiempos_respuesta"].append(latency)
 
-    audit_ledger.add_event("HSB_ROUTER", "SISTEMA", "ENTREGA_HL7_FHIR", f"Patient/pac-{doc}", "ENTREGADO")
+    audit_ledger.add_event("HSB_ROUTER", auth_user.get("rol", "SISTEMA"), "ENTREGA_HL7_FHIR", f"Patient/pac-{doc}", "ENTREGADO")
 
     return {
         "estado": "entregado",
@@ -314,7 +380,13 @@ async def ingest_hl7(request: Request):
     }
 
 @app.post("/hsb/csv")
-async def ingest_csv(request: Request, sede: int = Query(3, description="Número de sede (1, 2 o 3)")):
+async def ingest_csv(
+    request: Request,
+    sede: int = Query(3, description="Número de sede (1, 2 o 3)"),
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+    x_rol: Optional[str] = Header(None)
+):
     """
     Ingesta de archivo CSV legado con separador ';'.
     Procesa línea a línea: entrega válidos y reporta rechazados con motivo.
@@ -356,21 +428,31 @@ async def ingest_csv(request: Request, sede: int = Query(3, description="Número
         cond = FHIRNormalizer.build_condition(f"{doc}-{data['cod_cie10']}", doc, data["encounter_id"], data["cod_cie10"], data["desc_cie10"], data["fecha_atencion"])
         bundle = FHIRNormalizer.build_transaction_bundle([pat, enc, cond])
 
-        # Envío HAPI
-        success, _ = await send_to_hapi_with_retry(bundle)
+        # 1. Envío a HAPI FHIR con reintentos
+        success, detail = await send_to_hapi_with_retry(bundle)
+        if not success:
+            performance_metrics["muertos_dlq"] += 1
+            dead_entry = {
+                "id_mensaje": data["encounter_id"],
+                "fecha": datetime.now().isoformat(),
+                "formato": "CSV",
+                "sede": sede,
+                "payload_raw": line,
+                "motivo_muerte": detail
+            }
+            dead_letter_queue.append(dead_entry)
+            guardar_mensaje_bus(data["encounter_id"], "CSV", sede, hashlib.sha256(line.encode("utf-8")).hexdigest(), "MUERTO_DLQ", line, bundle)
+            audit_ledger.add_event("HSB_ROUTER", auth_user.get("rol", "SISTEMA"), "ENTREGA_FHIR", f"MSG_{data['encounter_id']}", "MUERTO_DLQ")
+            resultados.append({
+                "linea": idx,
+                "documento": doc,
+                "estado": "muerto_dlq",
+                "motivo": detail
+            })
+            continue
 
-        # Actualizar paciente y encuentro
-        active_patients[doc] = {
-            "documento": doc,
-            "tipo_documento": "CC",
-            "nombre": data["nombre"],
-            "apellido": data["apellido"],
-            "nacimiento": data["fecha_nacimiento"],
-            "sexo": data["sexo"],
-            "fhir_patient_id": f"pac-{doc}"
-        }
-        # Persistir en PostgreSQL de la sede (RF4)
-        persist_atencion_sede(
+        # 2. Persistir en PostgreSQL de la sede correspondiente
+        db_saved, db_info = persist_atencion_sede(
             sede_id=sede,
             documento=doc,
             nombre=data["nombre"],
@@ -384,6 +466,28 @@ async def ingest_csv(request: Request, sede: int = Query(3, description="Número
             cie10_desc=data.get("desc_cie10")
         )
 
+        if check_sede_alive(sede) and not db_saved:
+            performance_metrics["rechazados"] += 1
+            rechazados_count += 1
+            audit_ledger.add_event("HSB_CSV", auth_user.get("rol", "SISTEMA"), "PERSISTENCIA_DB", f"Patient/pac-{doc}", f"FALLIDO: {db_info}")
+            resultados.append({
+                "linea": idx,
+                "documento": doc,
+                "estado": "fallido_db",
+                "motivo": db_info
+            })
+            continue
+
+        # 3. Guardar en memoria y mensaje_bus
+        active_patients[doc] = {
+            "documento": doc,
+            "tipo_documento": "CC",
+            "nombre": data["nombre"],
+            "apellido": data["apellido"],
+            "nacimiento": data["fecha_nacimiento"],
+            "sexo": data["sexo"],
+            "fhir_patient_id": f"pac-{doc}"
+        }
         clinical_encounters.append({
             "id_atencion": data["encounter_id"],
             "documento": doc,
@@ -398,9 +502,10 @@ async def ingest_csv(request: Request, sede: int = Query(3, description="Número
             "tecnologias": []
         })
 
+        guardar_mensaje_bus(data["encounter_id"], "CSV", sede, hashlib.sha256(line.encode("utf-8")).hexdigest(), "entregado", line, bundle)
         performance_metrics["entregados"] += 1
         entregados_count += 1
-        audit_ledger.add_event("HSB_CSV", "SISTEMA", "ENTREGA_CSV_FHIR", f"Patient/pac-{doc}", "ENTREGADO")
+        audit_ledger.add_event("HSB_CSV", auth_user.get("rol", "SISTEMA"), "ENTREGA_CSV_FHIR", f"Patient/pac-{doc}", "ENTREGADO")
         resultados.append({
             "linea": idx,
             "documento": doc,
@@ -422,7 +527,7 @@ async def ingest_csv(request: Request, sede: int = Query(3, description="Número
 @app.post("/auth/login")
 async def login(credentials: Dict[str, Any]):
     """
-    Paso 1 del Login: Valida credenciales y genera código de 2FA (Fase 4).
+    Paso 1 del Login: Valida credenciales con sal y genera código dinámico e irrepetible de 2FA.
     """
     username = str(credentials.get("username", "")).strip()
     password = str(credentials.get("password", "")).strip()
@@ -432,50 +537,54 @@ async def login(credentials: Dict[str, Any]):
         audit_ledger.add_event(username or "ANONIMO", "DESCONOCIDO", "LOGIN_FALLIDO", "SISTEMA_AUTH", "DENEGADO")
         raise HTTPException(status_code=401, detail="Credenciales incorrectas (Usuario o contraseña no válidos)")
 
-    # Generar código 2FA de 6 dígitos
-    code = "807286" if username == "medico_ruiz" else f"{random.randint(100000, 999999)}"
+    # Generar código 2FA criptográficamente aleatorio (6 dígitos)
+    code = generate_2fa_code(username)
     ACTIVE_2FA_CODES[username] = {
         "code": code,
-        "expires": time.time() + 600,
+        "expires": time.time() + 300,  # 5 minutos de vigencia
         "user": user
     }
     
     email = user.get("email", f"{username}@salud.gov.co")
-    print(f"\n=======================================================")
-    print(f"📧 [2FA EMAIL ENVIADO] Servidor SMTP")
-    print(f"Destinatario: {email}")
-    print(f"Código 2FA: {code}")
-    print(f"=======================================================\n")
-
-    token_preview = JWTManager.create_token(username, user["rol"], user["documento"])
     audit_ledger.add_event(username, user["rol"].upper(), "SOLICITUD_2FA", f"EMAIL_{email}", "CODIGO_GENERADO")
 
     return {
         "status": "pending_2fa",
         "require_2fa": True,
-        "access_token": token_preview,
         "username": username,
         "email": email,
         "codigo_demo": code,
-        "mensaje": f"Se ha enviado un código de segundo factor a su correo: {email}"
+        "mensaje": f"Se ha emitido un código de segundo factor a su correo: {email}"
     }
 
 @app.post("/auth/verify-2fa")
 async def verify_2fa(payload: Dict[str, str]):
     """
-    Paso 2 del Login: Valida el código de 6 dígitos emitido al correo y entrega el Token JWT firmado.
+    Paso 2 del Login: Valida el código de 6 dígitos con expiración y entrega el Token JWT firmado.
+    El código es consumido inmediatamente (un solo uso).
     """
     username = payload.get("username", "").strip()
     code = payload.get("code", "").strip()
 
     record = ACTIVE_2FA_CODES.get(username)
-    if not record or record["code"] != code:
+    if not record:
+        audit_ledger.add_event(username, "SISTEMA", "2FA_FALLIDO", "VERIFICACION_CODIGO", "NO_SOLICITADO")
+        raise HTTPException(status_code=401, detail="No existe una solicitud de segundo factor activa para este usuario")
+
+    if time.time() > record.get("expires", 0):
+        ACTIVE_2FA_CODES.pop(username, None)
+        audit_ledger.add_event(username, "SISTEMA", "2FA_FALLIDO", "VERIFICACION_CODIGO", "EXPIRADO")
+        raise HTTPException(status_code=401, detail="El código de segundo factor ha expirado. Inicie sesión nuevamente")
+
+    if not hmac.compare_digest(record["code"], code):
         audit_ledger.add_event(username, "SISTEMA", "2FA_FALLIDO", "VERIFICACION_CODIGO", "DENEGADO")
-        raise HTTPException(status_code=401, detail="Código de segundo factor inválido o expirado")
+        raise HTTPException(status_code=401, detail="Código de segundo factor incorrecto")
 
     user = record["user"]
+    ACTIVE_2FA_CODES.pop(username, None)
+
     token = JWTManager.create_token(username, user["rol"], user["documento"])
-    audit_ledger.add_event(username, user["rol"].upper(), "LOGIN_2FA_EXITOSO", "SISTEMA_AUTH", "PERMITIDO")
+    audit_ledger.add_event(username, user["rol"].upper(), "LOGIN_EXITOSO_2FA", f"JWT_EMITIDO", "PERMITIDO")
 
     return {
         "access_token": token,
@@ -546,22 +655,22 @@ async def get_historia_unificada(
     # Atenciones del paciente cruzadas entre las 3 sedes
     atenciones_paciente = [e for e in clinical_encounters if e["documento"] == documento]
 
-    # Consulta Distribuida Real a los 3 Nodos PostgreSQL (RF4) con Tolerancia a Fallos
+    # Consulta Distribuida Real a los 3 Nodos PostgreSQL (RF4) con Detección Activa de Caídas
     sedes_activas = []
     sedes_inactivas = []
     atenciones_bd = []
 
     for s_id, s_name in [(1, "Sincelejo"), (2, "Cartagena"), (3, "Corozal")]:
-        activo, pac_bd, atns_bd = fetch_atenciones_sede(s_id, documento)
-        if os.getenv(f"SEDE{s_id}_DOWN", "false").lower() == "true":
+        # Detectar caída física (docker stop) o simulada (toggle)
+        esta_viva = check_sede_alive(s_id)
+        if not esta_viva:
             sedes_inactivas.append({"id_sede": s_id, "nombre": s_name, "estado": "CAIDA_NO_DISPONIBLE"})
-        elif activo:
+        else:
+            activo, pac_bd, atns_bd = fetch_atenciones_sede(s_id, documento)
             sedes_activas.append({"id_sede": s_id, "nombre": s_name, "estado": "OPERATIVA"})
             if pac_bd and not paciente.get("nombre"):
                 paciente.update(pac_bd)
             atenciones_bd.extend(atns_bd)
-        else:
-            sedes_activas.append({"id_sede": s_id, "nombre": s_name, "estado": "OPERATIVA"})
 
     # Unificar atenciones evitando duplicados entre PostgreSQL y memoria
     sedes_inactivas_ids = [s["id_sede"] for s in sedes_inactivas]
@@ -765,27 +874,43 @@ async def tamper_audit_simulation(evento_id: int = Query(..., description="ID de
 # --------------------------------------------------------------------------
 @app.get("/health")
 async def health_check():
-    """Estado de salud de la plataforma y sus dependencias."""
+    """Estado de salud real de la plataforma y sus dependencias físicas."""
+    s1_up = check_sede_alive(1)
+    s2_up = check_sede_alive(2)
+    s3_up = check_sede_alive(3)
+    hapi_up = await check_hapi_alive()
+
+    is_degraded = not (s1_up and s2_up and s3_up and hapi_up)
+    status_general = "unhealthy" if (not s1_up and not s2_up and not s3_up) else ("degraded" if is_degraded else "healthy")
+
     return {
-        "status": "healthy",
+        "status": status_general,
         "timestamp": datetime.now().isoformat(),
         "componentes": {
             "hsb_service": "UP",
-            "nodo_sede1_sincelejo": "UP" if os.getenv("SEDE1_DOWN", "false").lower() != "true" else "DOWN",
-            "nodo_sede2_cartagena": "UP" if os.getenv("SEDE2_DOWN", "false").lower() != "true" else "DOWN",
-            "nodo_sede3_corozal": "UP" if os.getenv("SEDE3_DOWN", "false").lower() != "true" else "DOWN",
-            "hapi_fhir_server": "UP"
+            "nodo_sede1_sincelejo": "UP" if s1_up else "DOWN",
+            "nodo_sede2_cartagena": "UP" if s2_up else "DOWN",
+            "nodo_sede3_corozal": "UP" if s3_up else "DOWN",
+            "hapi_fhir_server": "UP" if hapi_up else "DOWN"
         }
     }
 
 @app.get("/metrics")
 async def get_metrics():
-    """Métricas en tiempo real exigidas por la rúbrica."""
+    """Métricas calculadas en tiempo real sin fórmulas ficticias."""
     total = performance_metrics["total_recibidos"]
     fallidos = performance_metrics["rechazados"] + performance_metrics["muertos_dlq"]
     tasa_fallidos = (fallidos / total * 100) if total > 0 else 0.0
     tiempos = performance_metrics["tiempos_respuesta"]
-    latencia_media = (sum(tiempos) / len(tiempos)) if tiempos else 12.5
+    latencia_media = (sum(tiempos) / len(tiempos)) if tiempos else 0.0
+
+    # Cálculo real de mensajes por minuto basado en timestamps registrados en los últimos 60 segundos
+    ahora = time.time()
+    ultimos_60s = [t for t in timestamps_recibidos if ahora - t <= 60]
+    mpm = float(len(ultimos_60s))
+    if mpm == 0 and total > 0:
+        minutos_activo = max((ahora - server_start_time) / 60.0, 0.1)
+        mpm = round(total / minutos_activo, 1)
 
     return {
         "total_mensajes_recibidos": total,
@@ -795,7 +920,7 @@ async def get_metrics():
         "mensajes_muertos_dlq": performance_metrics["muertos_dlq"],
         "tasa_fallidos_porcentaje": round(tasa_fallidos, 2),
         "latencia_media_ms": round(latencia_media, 2),
-        "mensajes_por_minuto": round(total * 1.5, 1) if total > 0 else 0.0
+        "mensajes_por_minuto": round(mpm, 1)
     }
 
 # --------------------------------------------------------------------------
@@ -967,6 +1092,9 @@ async def serve_ui():
     <div id="twoFactorScreen" class="twofa-wrapper d-none">
         <div class="twofa-card">
             <h4 class="fw-bold mb-3 text-dark text-center">Verificación de Segundo Factor</h4>
+            <div id="twoFaAlertBox" class="alert alert-primary py-2 px-3 small text-center mb-3">
+                <i class="fa-solid fa-envelope me-1"></i> Código emitido al correo: <strong id="twoFaDisplayCode"></strong> (Válido 5 min)
+            </div>
             <p class="text-secondary small mb-4 text-center" style="font-size: 0.88rem; line-height: 1.5;">
                 Por favor, revise su correo para encontrar el código de segundo factor e ingréselo a continuación para completar su autenticación.
             </p>

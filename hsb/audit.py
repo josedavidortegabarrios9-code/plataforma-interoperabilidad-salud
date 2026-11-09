@@ -2,6 +2,7 @@
 Módulo de Auditoría Criptográfica Encadenada (Tamper-Evident Hash Chain).
 Garantiza inmutabilidad y detección inmediata de alteraciones de registros clínicos.
 H_n = SHA-256(timestamp + actor + rol + accion + recurso + resultado + H_{n-1})
+Persiste cada eslabón en la tabla evento_auditoria de PostgreSQL.
 """
 
 import hashlib
@@ -13,6 +14,11 @@ GENESIS_HASH = "0000000000000000000000000000000000000000000000000000000000000000
 class AuditChain:
     def __init__(self):
         self.events: List[Dict[str, Any]] = []
+
+    def load_from_db(self, db_events: List[Dict[str, Any]]):
+        """Carga eventos persistidos desde PostgreSQL al iniciar el servicio."""
+        if db_events:
+            self.events = db_events
 
     def get_last_hash(self) -> str:
         if not self.events:
@@ -41,6 +47,24 @@ class AuditChain:
             "hash_actual": hash_actual
         }
         self.events.append(event)
+
+        # Persistir de forma segura en PostgreSQL (tabla evento_auditoria)
+        try:
+            from hsb.database import persist_audit_event_to_db
+            persist_audit_event_to_db({
+                "id_evento": event["id_evento"],
+                "fecha_hora": timestamp,
+                "actor_username": actor,
+                "rol_actor": rol,
+                "accion": accion,
+                "recurso_afectado": recurso,
+                "resultado": resultado,
+                "hash_previo": hash_previo,
+                "hash_actual": hash_actual
+            })
+        except Exception:
+            pass
+
         return event
 
     def verify_integrity(self) -> Dict[str, Any]:
@@ -95,5 +119,5 @@ class AuditChain:
             "mensaje": "Integridad criptográfica verificada: 0 alteraciones detectadas"
         }
 
-# Instancia global del ledger de auditoría en memoria
+# Instancia global del ledger de auditoría
 audit_ledger = AuditChain()
