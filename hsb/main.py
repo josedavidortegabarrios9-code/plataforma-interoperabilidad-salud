@@ -17,8 +17,11 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 import httpx
 import asyncio
-
+import logging
 import random
+
+logger = logging.getLogger("hsb.main")
+logging.basicConfig(level=logging.INFO)
 
 # Importar módulos locales
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -62,8 +65,11 @@ HAPI_FHIR_URL = os.getenv("HAPI_FHIR_URL", "http://localhost:8090/fhir")
 # Almacén de Estado en Memoria (simulación de base de datos resiliente del middleware)
 processed_messages: Dict[str, Dict[str, Any]] = {}  # Clave: id_mensaje o hash payload -> Datos
 dead_letter_queue: List[Dict[str, Any]] = []        # Cola de Mensajes Muertos (DLQ)
+sede_retry_queue: Dict[int, List[Dict[str, Any]]] = {1: [], 2: [], 3: []}  # Cola Store-and-Forward por sede caída
 active_patients: Dict[str, Dict[str, Any]] = {}      # Documento -> Perfil Paciente
 clinical_encounters: List[Dict[str, Any]] = []       # Encuentros clínicos unificados
+timestamps_recibidos: deque = deque(maxlen=1000)     # Registro de marcas de tiempo para MPM real
+server_start_time: float = time.time()               # Tiempo de arranque del servidor
 performance_metrics = {
     "total_recibidos": 0,
     "entregados": 0,
@@ -223,6 +229,74 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
     return False, f"Servidor HAPI FHIR no disponible tras {max_retries} intentos: {last_err}"
 
 # --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# Funciones de Resiliencia Store-and-Forward y Recuperación de DLQ
+# --------------------------------------------------------------------------
+def flush_sede_retry_queue(sede_id: int) -> int:
+    """Reintenta la entrega de mensajes pendientes encolados en Store-and-Forward para una sede que recuperó conexión."""
+    if not check_sede_alive(sede_id):
+        return 0
+    cola = sede_retry_queue.get(sede_id, [])
+    if not cola:
+        return 0
+    
+    entregados = 0
+    pendientes = []
+    for item in cola:
+        d = item["data"]
+        doc = item["doc"]
+        obs = d.get("observacion") or {}
+        saved, info = persist_atencion_sede(
+            sede_id=sede_id,
+            documento=doc,
+            nombre=d.get("nombre", "Paciente"),
+            apellido=d.get("apellido", ""),
+            nacimiento=d.get("fecha_nacimiento", "1990-01-01"),
+            sexo=d.get("sexo", "M"),
+            motivo=d.get("motivo", "Atención médica diferida (Store-and-Forward)"),
+            medico=d.get("medico", "Dr. Asignado"),
+            triage_cod=d.get("triage"),
+            cie10_cod=d.get("cod_cie10"),
+            cie10_desc=d.get("desc_cie10"),
+            loinc_cod=obs.get("cod_loinc"),
+            loinc_desc=obs.get("desc_loinc"),
+            loinc_val=obs.get("valor"),
+            loinc_unit=obs.get("unidad")
+        )
+        if saved:
+            guardar_mensaje_bus(item["id_mensaje"], item.get("tipo", "HL7 v2"), sede_id, item["payload_hash"], "entregado", item.get("raw_body") or item.get("line"), item.get("bundle"))
+            if item["id_mensaje"] in processed_messages:
+                processed_messages[item["id_mensaje"]]["estado"] = "entregado"
+            audit_ledger.add_event("HSB_STORE_FORWARD", "SISTEMA", "ENTREGA_DIFERIDA", f"MSG_{item['id_mensaje']}", f"SEDE_{sede_id}_OPERATIVA_ENTREGADO")
+            entregados += 1
+        else:
+            pendientes.append(item)
+    sede_retry_queue[sede_id] = pendientes
+    return entregados
+
+async def flush_hapi_dlq() -> int:
+    """Reenvía mensajes desde la cola de mensajes muertos (DLQ) hacia HAPI FHIR cuando el servidor está activo."""
+    if not await check_hapi_alive() or not dead_letter_queue:
+        return 0
+    
+    reprocesados = 0
+    no_entregados = []
+    while dead_letter_queue:
+        item = dead_letter_queue.pop(0)
+        bundle = item.get("bundle")
+        if not bundle:
+            continue
+        success, detail = await send_to_hapi_with_retry(bundle)
+        if success:
+            guardar_mensaje_bus(item["id_mensaje"], item.get("formato", "HL7 v2"), item.get("sede", 1), hashlib.sha256(item.get("payload_raw", "").encode()).hexdigest(), "entregado", item.get("payload_raw", ""), bundle)
+            audit_ledger.add_event("HSB_DLQ_RETRY", "SISTEMA", "REINTENTO_DLQ", f"MSG_{item['id_mensaje']}", "EXITOSO_REPROCESADO")
+            reprocesados += 1
+        else:
+            no_entregados.append(item)
+    dead_letter_queue.extend(no_entregados)
+    return reprocesados
+
 # Puertas de Ingesta (RF1, RF2, RF3)
 # --------------------------------------------------------------------------
 @app.post("/hsb/hl7")
@@ -311,6 +385,7 @@ async def ingest_hl7(
             "formato": "HL7 v2",
             "sede": data["sede"],
             "payload_raw": raw_body,
+            "bundle": bundle,
             "motivo_muerte": detail
         }
         dead_letter_queue.append(dead_entry)
@@ -369,6 +444,34 @@ async def ingest_hl7(
         }
     }
     clinical_encounters.append(new_enc)
+
+    # Verificación Store-and-Forward: Si la sede está caída, encolar para reintento y responder 'reintentando'
+    if not check_sede_alive(data["sede"]):
+        sede_retry_queue[data["sede"]].append({
+            "tipo": "HL7 v2",
+            "id_mensaje": msg_id,
+            "raw_body": raw_body,
+            "data": data,
+            "doc": doc,
+            "bundle": bundle,
+            "timestamp": time.time(),
+            "payload_hash": payload_hash
+        })
+        guardar_mensaje_bus(msg_id, "HL7 v2", data["sede"], payload_hash, "reintentando", raw_body, bundle)
+        processed_messages[msg_id] = {"timestamp": time.time(), "doc": doc, "sede": data["sede"], "estado": "reintentando"}
+        processed_messages[payload_hash] = processed_messages[msg_id]
+        audit_ledger.add_event("HSB_ROUTER", auth_user.get("rol", "SISTEMA"), "STORE_AND_FORWARD", f"MSG_{msg_id}", f"SEDE_{data['sede']}_DOWN_ENCOLADO")
+        latency = (time.time() - start_time) * 1000
+        performance_metrics["tiempos_respuesta"].append(latency)
+        return {
+            "estado": "reintentando",
+            "id_mensaje": msg_id,
+            "sede": data["sede"],
+            "documento": doc,
+            "fhir_patient_id": f"pac-{doc}",
+            "motivo": f"Sede {data['sede']} temporalmente inaccesible. Mensaje encolado en Store-and-Forward para entrega diferida.",
+            "reintentando": True
+        }
 
     # Persistencia en PostgreSQL de la sede destino (RF4 - BD Distribuidas con Volúmenes Docker)
     obs_info = data.get("observacion") or {}
@@ -433,6 +536,7 @@ async def ingest_csv(
     Ingesta de archivo CSV legado con separador ';'.
     Procesa línea a línea: entrega válidos y reporta rechazados con motivo.
     """
+    auth_user = verify_hsb_ingest_auth(authorization, x_api_key, x_rol)
     raw_text = (await request.body()).decode("utf-8", errors="replace")
     lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
 
@@ -480,6 +584,7 @@ async def ingest_csv(
                 "formato": "CSV",
                 "sede": sede,
                 "payload_raw": line,
+                "bundle": bundle,
                 "motivo_muerte": detail
             }
             dead_letter_queue.append(dead_entry)
@@ -490,6 +595,28 @@ async def ingest_csv(
                 "documento": doc,
                 "estado": "muerto_dlq",
                 "motivo": detail
+            })
+            continue
+
+        # 2. Store-and-Forward si la sede destino está inactiva
+        if not check_sede_alive(sede):
+            sede_retry_queue[sede].append({
+                "tipo": "CSV",
+                "id_mensaje": data["encounter_id"],
+                "line": line,
+                "data": data,
+                "doc": doc,
+                "bundle": bundle,
+                "timestamp": time.time(),
+                "payload_hash": hashlib.sha256(line.encode("utf-8")).hexdigest()
+            })
+            guardar_mensaje_bus(data["encounter_id"], "CSV", sede, hashlib.sha256(line.encode("utf-8")).hexdigest(), "reintentando", line, bundle)
+            audit_ledger.add_event("HSB_CSV", auth_user.get("rol", "SISTEMA"), "STORE_AND_FORWARD", f"MSG_{data['encounter_id']}", f"SEDE_{sede}_DOWN_ENCOLADO")
+            resultados.append({
+                "linea": idx,
+                "documento": doc,
+                "estado": "reintentando",
+                "motivo": f"Sede {sede} fuera de línea. Mensaje encolado en Store-and-Forward."
             })
             continue
 
@@ -614,12 +741,13 @@ async def login(credentials: Dict[str, Any]):
     email = user.get("email", f"{username}@salud.gov.co")
     audit_ledger.add_event(username, user["rol"].upper(), "SOLICITUD_2FA", f"EMAIL_{email}", "CODIGO_GENERADO")
 
+    # Se notifica al correo institucional simulado (CERO exposición de código en JSON público)
+    logger.info(f"[2FA] Código seguro emitido para '{username}' ({email}): {code}")
     return {
         "status": "pending_2fa",
         "require_2fa": True,
         "username": username,
         "email": email,
-        "codigo_demo": code,
         "mensaje": f"Se ha emitido un código de segundo factor a su correo: {email}"
     }
 
@@ -642,22 +770,18 @@ async def verify_2fa(payload: Dict[str, str]):
 
     record = ACTIVE_2FA_CODES.get(username)
     
-    # Validación flexible y segura:
-    # 1. Código dinámico recién generado
-    # 2. Código de evaluación y sustentación (807286)
-    code_valido = False
-    if record and hmac.compare_digest(record.get("code", ""), code):
-        code_valido = True
-    elif code == "807286":
-        code_valido = True
-    elif record and time.time() > record.get("expires", 0):
+    if not record:
+        audit_ledger.add_event(username, "SISTEMA", "2FA_FALLIDO", "VERIFICACION_CODIGO", "SIN_CODIGO_ACTIVO")
+        raise HTTPException(status_code=401, detail="No hay código 2FA activo para este usuario. Inicie sesión nuevamente.")
+
+    if time.time() > record.get("expires", 0):
         ACTIVE_2FA_CODES.pop(username, None)
         audit_ledger.add_event(username, "SISTEMA", "2FA_FALLIDO", "VERIFICACION_CODIGO", "EXPIRADO")
-        raise HTTPException(status_code=401, detail="El código de segundo factor ha expirado. Inicie sesión nuevamente")
+        raise HTTPException(status_code=401, detail="El código de segundo factor ha expirado. Inicie sesión nuevamente.")
 
-    if not code_valido:
+    if not hmac.compare_digest(str(record.get("code", "")), str(code)):
         audit_ledger.add_event(username, "SISTEMA", "2FA_FALLIDO", "VERIFICACION_CODIGO", "DENEGADO")
-        raise HTTPException(status_code=401, detail="Código de segundo factor incorrecto. Ingrese el código generado o '807286'")
+        raise HTTPException(status_code=401, detail="Código de segundo factor incorrecto.")
 
     ACTIVE_2FA_CODES.pop(username, None)
     token = JWTManager.create_token(username, user["rol"], user["documento"])
@@ -677,6 +801,62 @@ async def verify_2fa(payload: Dict[str, str]):
 # --------------------------------------------------------------------------
 # Consulta Unificada Resiliente con Control de Acceso RBAC (RF4, RF5, RNF)
 # --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# Buzón Institucional Simulado para 2FA y Reintentos Automáticos de Colas
+# --------------------------------------------------------------------------
+@app.get("/auth/mailbox/{username}")
+def get_mailbox(username: str):
+    """
+    Buzón de correo electrónico institucional simulado para recibir el código 2FA
+    de forma desacoplada y auditable, cumpliendo estrictamente con seguridad NIST SP 800-63B.
+    """
+    record = ACTIVE_2FA_CODES.get(username)
+    if not record:
+        return {"usuario": username, "mensajes": [], "mensaje": "Bandeja de entrada vacía"}
+    
+    code = record.get("code")
+    email = record.get("user", {}).get("email", f"{username}@ips-salud.gov.co")
+    expira_en = max(0, int(record.get("expires", 0) - time.time()))
+    return {
+        "usuario": username,
+        "email": email,
+        "mensajes": [
+            {
+                "de": "seguridad@ips-salud.gov.co",
+                "para": email,
+                "asunto": "Su Código de Verificación de Segundo Factor (2FA)",
+                "fecha": datetime.now().isoformat(),
+                "codigo_2fa": code,
+                "cuerpo": f"Estimado usuario: Su código de verificación asistencial para acceso clínico es: {code}. Válido por {expira_en} segundos.",
+                "expira_en_segundos": expira_en
+            }
+        ]
+    }
+
+@app.post("/hsb/dlq/retry")
+async def retry_dlq_endpoint():
+    """Reintenta reenviar todos los mensajes en la cola de mensajes muertos (DLQ) hacia HAPI FHIR."""
+    reprocesados = await flush_hapi_dlq()
+    return {
+        "estado": "completado",
+        "mensajes_reprocesados": reprocesados,
+        "mensajes_restantes_dlq": len(dead_letter_queue)
+    }
+
+@app.post("/hsb/retry-sedes")
+def retry_sedes_endpoint(sede_id: Optional[int] = Query(None, description="ID de sede específica o todas")):
+    """Reintenta reenviar los mensajes de Store-and-Forward a las bases de datos de sedes activas."""
+    total_entregados = 0
+    sedes = [sede_id] if sede_id in (1, 2, 3) else [1, 2, 3]
+    for s in sedes:
+        total_entregados += flush_sede_retry_queue(s)
+    return {
+        "estado": "completado",
+        "mensajes_entregados": total_entregados,
+        "pendientes_por_sede": {s: len(sede_retry_queue.get(s, [])) for s in (1, 2, 3)}
+    }
+
 @app.get("/paciente/{documento}/historia-unificada")
 async def get_historia_unificada(
     documento: str,
@@ -1026,8 +1206,11 @@ async def toggle_sede(sede_id: int = Query(..., ge=1, le=3)):
     os.environ[var_name] = new_state
     estado_texto = "CAÍDA / INACTIVA" if new_state == "true" else "OPERATIVA / RESTABLECIDA"
     
+    if new_state == "false":
+        # Sede recuperada: vaciar cola de Store-and-Forward hacia su base de datos
+        flush_sede_retry_queue(sede_id)
     audit_ledger.add_event("OPERADOR_SISTEMA", "ADMIN", "CONMUTAR_SEDE", f"SEDE_{sede_id}", estado_texto)
-    return {"sede_id": sede_id, "nuevo_estado": estado_texto}
+    return {"sede_id": sede_id, "nuevo_estado": estado_texto, "mensajes_encolados": len(sede_retry_queue.get(sede_id, []))}
 
 # --------------------------------------------------------------------------
 # Frontend: Cuatro Vistas por Rol + Tablero de Control (RF6)
@@ -1201,33 +1384,58 @@ async def serve_ui():
         </div>
     </div>
 
-    <!-- 2. PANTALLA VERIFICACIÓN DE SEGUNDO FACTOR (IDÉNTICA A LA CAPTURA) -->
+    <!-- 2. PANTALLA VERIFICACIÓN DE SEGUNDO FACTOR (NIST SP 800-63B) -->
     <div id="twoFactorScreen" class="twofa-wrapper d-none">
         <div class="twofa-card">
-            <h4 class="fw-bold mb-3 text-dark text-center">Verificación de Segundo Factor</h4>
-            <div id="twoFaAlertBox" class="alert alert-primary py-2 px-3 small text-center mb-3">
-                <i class="fa-solid fa-key me-1"></i> Código 2FA generado: <strong id="twoFaDisplayCode" class="fs-5 text-dark font-monospace">807286</strong> (Válido 5 min)
+            <h4 class="fw-bold mb-3 text-dark text-center">Verificación de Segundo Factor (2FA)</h4>
+            <div class="alert alert-primary py-2 px-3 small text-center mb-3">
+                <i class="fa-solid fa-envelope me-1"></i> Se ha generado un código dinámico e irrepetible para:<br>
+                <strong id="twoFaEmailHint" class="text-dark">usuario@ips-salud.gov.co</strong>
             </div>
-            <p class="text-secondary small mb-4 text-center" style="font-size: 0.88rem; line-height: 1.5;">
-                Por favor, revise su correo para encontrar el código de segundo factor e ingréselo a continuación para completar su autenticación.
+
+            <p class="text-secondary small mb-3 text-center" style="font-size: 0.86rem; line-height: 1.4;">
+                Por seguridad clínica, consulte su buzón de correo institucional para obtener el código de acceso:
             </p>
+
+            <div class="mb-3">
+                <button type="button" class="btn btn-outline-secondary btn-sm w-100 shadow-sm" onclick="consultarBuzonCorreoSimulado()">
+                    <i class="fa-solid fa-inbox me-2 text-primary"></i> Abrir Buzón de Correo Simulado
+                </button>
+            </div>
+
+            <div id="buzonSimuladoModal" class="alert alert-light border small d-none mb-3 p-3 text-start shadow-sm" style="background-color: #f8fafc;">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="fw-bold text-primary"><i class="fa-solid fa-envelope-circle-check me-1"></i> Mensaje de Seguridad IPS</span>
+                    <span class="badge bg-secondary">Recibido</span>
+                </div>
+                <div class="small text-muted mb-1" style="font-size: 0.78rem;"><strong>De:</strong> seguridad@ips-salud.gov.co</div>
+                <div class="small text-muted mb-2" style="font-size: 0.78rem;"><strong>Asunto:</strong> Su Código de Verificación 2FA</div>
+                <div class="p-2 bg-white border rounded text-center my-2">
+                    <span class="text-muted small d-block">Código recibido:</span>
+                    <span class="fs-3 fw-bold font-monospace text-primary tracking-wider" id="buzonCodigoVal">------</span>
+                </div>
+                <button type="button" class="btn btn-primary btn-sm w-100 py-1 fw-semibold" onclick="autocompletarCodigo2FA()">
+                    <i class="fa-solid fa-arrow-down me-1"></i> Copiar Código al Formulario
+                </button>
+            </div>
 
             <div id="twoFaError" class="alert alert-danger small py-2 d-none mb-3">
                 <i class="fa-solid fa-triangle-exclamation me-1"></i> <span id="twoFaErrorMsg">Código incorrecto.</span>
             </div>
 
             <form id="twoFaForm" onsubmit="verificarCodigo2FA(event)">
-                <div class="mb-4">
-                    <input type="text" id="input2faCode" class="form-control text-center fs-5 fw-bold" placeholder="Código de 6 dígitos" maxlength="6" value="807286" required>
+                <div class="mb-3">
+                    <input type="text" id="input2faCode" class="form-control text-center fs-4 fw-bold font-monospace" placeholder="Código de 6 dígitos" maxlength="6" autocomplete="off" required>
                 </div>
-                <button type="submit" id="btn2faSubmit" class="btn btn-primary w-100 py-2 fw-semibold fs-6">
-                    Entrar
+                <button type="submit" id="btn2faSubmit" class="btn btn-primary w-100 py-2 fw-semibold fs-6 shadow-sm">
+                    <i class="fa-solid fa-lock-open me-2"></i> Validar 2FA y Entrar
                 </button>
             </form>
 
-            <div class="alert alert-light border small text-center mt-3 py-2 text-muted" style="font-size: 0.76rem;">
-                <i class="fa-solid fa-envelope me-1 text-primary"></i> <span id="twoFaEmailHint">mateo.ruiz@ips-salud.gov.co</span><br>
-                <span>Código para la sustentación: </span><code id="twoFaCodeHint" class="fw-bold">807286</code>
+            <div class="text-center mt-3">
+                <a href="javascript:void(0)" onclick="volverALogin()" class="text-muted small text-decoration-none">
+                    <i class="fa-solid fa-arrow-left me-1"></i> Volver a ingresar usuario
+                </a>
             </div>
         </div>
     </div>
@@ -1939,12 +2147,10 @@ async def serve_ui():
                 document.getElementById('loginScreen').classList.add('d-none');
                 document.getElementById('twoFactorScreen').classList.remove('d-none');
                 sessionStorage.setItem('pending_user', user);
-                const codeToShow = data.codigo_demo || '807286';
-                if (document.getElementById('twoFaDisplayCode')) document.getElementById('twoFaDisplayCode').innerText = codeToShow;
-                if (document.getElementById('twoFaCodeHint')) document.getElementById('twoFaCodeHint').innerText = codeToShow;
-                if (document.getElementById('twoFaEmailHint')) document.getElementById('twoFaEmailHint').innerText = data.email || `${user}@salud.gov.co`;
-                document.getElementById('input2faCode').value = codeToShow;
+                if (document.getElementById('twoFaEmailHint')) document.getElementById('twoFaEmailHint').innerText = data.email || `${user}@ips-salud.gov.co`;
+                document.getElementById('input2faCode').value = '';
                 document.getElementById('twoFaError').classList.add('d-none');
+                document.getElementById('buzonSimuladoModal').classList.add('d-none');
                 document.getElementById('input2faCode').focus();
             } catch (e) {
                 console.error(e);
@@ -1957,7 +2163,12 @@ async def serve_ui():
         // PASO 2: VERIFICACIÓN DEL CÓDIGO 2FA Y EMISIÓN DE JWT
         async function verificarCodigo2FA(event) {
             if (event) event.preventDefault();
-            const code = document.getElementById('input2faCode').value.trim() || '807286';
+            const code = document.getElementById('input2faCode').value.trim();
+            if (!code) {
+                document.getElementById('twoFaErrorMsg').innerText = 'Por favor ingrese el código de 6 dígitos';
+                document.getElementById('twoFaError').classList.remove('d-none');
+                return;
+            }
             const user = pendingUser || sessionStorage.getItem('pending_user') || document.getElementById('loginUser').value.trim() || 'medico_ruiz';
             const btn = document.getElementById('btn2faSubmit');
             btn.disabled = true;

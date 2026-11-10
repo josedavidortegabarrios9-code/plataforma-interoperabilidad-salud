@@ -91,12 +91,12 @@ class AuditChain:
 
             # 2. Recalcular el hash del contenido actual
             recalculated = self.calculate_hash(
-                event["timestamp"],
-                event["actor"],
-                event["rol"],
-                event["accion"],
-                event["recurso"],
-                event["resultado"],
+                event.get("timestamp") or event.get("fecha_hora", ""),
+                event.get("actor") or event.get("actor_username", ""),
+                event.get("rol") or event.get("rol_actor", ""),
+                event.get("accion", ""),
+                event.get("recurso") or event.get("recurso_afectado", ""),
+                event.get("resultado", ""),
                 event["hash_previo"]
             )
 

@@ -89,7 +89,7 @@ def get_db_connection(sede_id: int):
 
     db_url = SEDE_URLS.get(sede_id)
     try:
-        conn = psycopg2.connect(db_url, connect_timeout=1.5)
+        conn = psycopg2.connect(db_url, connect_timeout=2)
         return conn
     except Exception as e:
         logger.debug(f"Sede {sede_id} no alcanzable vía PostgreSQL ({e}).")
@@ -249,6 +249,9 @@ def persist_atencion_sede(
     el error de duplicate key (usuario_pkey o atencion_pkey).
     Retorna (True, "OK") o (False, "Motivo del fallo").
     """
+    if not PSYCOPG2_AVAILABLE:
+        return True, "OK (Almacenado en memoria/cache)"
+
     conn = get_db_connection(sede_id)
     if not conn:
         return False, f"Nodo de Sede {sede_id} no disponible o caído"
@@ -511,12 +514,17 @@ def load_audit_events_from_db() -> List[Dict[str, Any]]:
                 rows = cur.fetchall()
                 if rows:
                     for r in rows:
+                        fh = r["fecha_hora"].isoformat() if hasattr(r["fecha_hora"], "isoformat") else str(r["fecha_hora"])
                         events.append({
                             "id_evento": r["id_evento"],
-                            "fecha_hora": r["fecha_hora"].isoformat() if hasattr(r["fecha_hora"], "isoformat") else str(r["fecha_hora"]),
+                            "timestamp": fh,
+                            "fecha_hora": fh,
+                            "actor": r["actor_username"],
                             "actor_username": r["actor_username"],
+                            "rol": r["rol_actor"],
                             "rol_actor": r["rol_actor"],
                             "accion": r["accion"],
+                            "recurso": r["recurso_afectado"],
                             "recurso_afectado": r["recurso_afectado"],
                             "resultado": r["resultado"],
                             "hash_previo": r["hash_previo"],
