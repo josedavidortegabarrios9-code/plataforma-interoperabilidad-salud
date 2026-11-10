@@ -1779,7 +1779,7 @@ async def serve_ui():
                         <div id="historialTimeline"></div>
 
                         <!-- SECCIÓN EXCLUSIVA VISTA PACIENTE: AUDITORÍA DE ACCESOS -->
-                        <div id="secAccesosPaciente" class="mt-4 pt-3 border-top">
+                        <div id="secAccesosPaciente" class="mt-4 pt-3 border-top d-none">
                             <h6 class="fw-bold text-secondary mb-2">
                                 <i class="fa-solid fa-user-shield me-2"></i> Quién ha accedido a mi Historia Clínica (Trazabilidad y Transparencia)
                             </h6>
@@ -2265,6 +2265,8 @@ async def serve_ui():
                 document.getElementById('menuCrearHistorial').classList.remove('d-none');
                 document.getElementById('menuConsultarHistorial').classList.remove('d-none');
                 document.getElementById('menuListarPacientes').classList.remove('d-none');
+                const secAcc = document.getElementById('secAccesosPaciente');
+                if (secAcc) secAcc.classList.add('d-none');
                 navegarSeccion('crear');
             } else if (rol === 'auditor') {
                 // Auditor ve Estado de Nodos y Auditoría
@@ -2272,12 +2274,14 @@ async def serve_ui():
                 navegarSeccion('dashboard');
                 verificarAuditoria();
             } else if (rol === 'paciente') {
-                // Paciente solo ve la consulta de su propio historial
+                // Paciente solo ve la consulta de su propio historial y quién accedió a él
                 document.getElementById('menuConsultarHistorial').classList.remove('d-none');
                 document.getElementById('searchDocInput').value = currentAuth.documento || '1001';
                 document.getElementById('searchDocInput').readOnly = true;
                 const searchBtn = document.querySelector('#secConsultarHistorial .btn-primary');
                 if (searchBtn) searchBtn.classList.add('d-none');
+                const secAcc = document.getElementById('secAccesosPaciente');
+                if (secAcc) secAcc.classList.remove('d-none');
                 navegarSeccion('consultar');
             }
         }
@@ -2429,7 +2433,15 @@ RXA|0|1|202611081200|202611081200|${med}^${pos}`;
                 
                 const box = document.getElementById('registroResult');
                 box.classList.remove('d-none');
-                box.innerHTML = `<i class="fa-solid fa-circle-check me-2"></i> <strong>Registro Guardado con Éxito:</strong> Paciente CC ${doc} (${nombre} ${apellido}) integrado en Sede ${sede}. Estado HSB: <code>${data.estado}</code> • Recurso FHIR: <code>Patient/pac-${doc}</code>.`;
+                let estadoBadge = `<span class="badge bg-success">${data.estado}</span>`;
+                if (data.estado === 'muerto') {
+                    estadoBadge = `<span class="badge bg-secondary"><i class="fa-solid fa-inbox me-1"></i> Encolado en DLQ (HAPI FHIR en espera)</span>`;
+                } else if (data.estado === 'reintentando') {
+                    estadoBadge = `<span class="badge bg-warning text-dark"><i class="fa-solid fa-clock-rotate-left me-1"></i> Store-and-Forward (Reintentando)</span>`;
+                } else if (data.estado === 'entregado') {
+                    estadoBadge = `<span class="badge bg-success"><i class="fa-solid fa-circle-check me-1"></i> Entregado</span>`;
+                }
+                box.innerHTML = `<i class="fa-solid fa-circle-check me-2"></i> <strong>Registro Guardado con Éxito:</strong> Paciente CC ${doc} (${nombre} ${apellido}) integrado en Sede ${sede}. Estado HSB: ${estadoBadge} • Recurso FHIR: <code>Patient/pac-${doc}</code>.`;
                 box.scrollIntoView({ behavior: 'smooth' });
                 cargarPacientesAsignadosMedico();
                 cargarListadoPacientes();
@@ -2560,7 +2572,7 @@ RXA|0|1|202611081200|202611081200|${med}^${pos}`;
             verificarAuditoria();
         }
     
-        // GESTIÓN DE PACIENTES ASIGNADOS AL MÉDICO (SALA DE ESPERA)
+        // GESTIÓN DE PACIENTES ASIGNADOS AL MÉDICO (SALA DE ESPERA FILTRADA POR PROFESIONAL)
         async function cargarPacientesAsignadosMedico() {
             const container = document.getElementById('listaPacientesAsignados');
             if (!container) return;
@@ -2573,13 +2585,29 @@ RXA|0|1|202611081200|202611081200|${med}^${pos}`;
                 }
                 const pacientes = await res.json();
                 
-                // Pacientes en espera o admitidos con triage
-                const lista = pacientes.filter(p => p.triage || (p.estado && p.estado.toLowerCase().includes('espera')));
+                const medNombre = (currentAuth && currentAuth.nombre) ? currentAuth.nombre : 'Dr. Mateo Ruiz';
+                const medClean = medNombre.toLowerCase().replace('dr.', '').replace('dra.', '').trim();
+                const partesMed = medClean.split(' ').filter(p => p.length > 2);
+
+                // Filtrar ESTRICTAMENTE los pacientes asignados a este médico
+                const lista = pacientes.filter(p => {
+                    const enEspera = p.triage || (p.estado && p.estado.toLowerCase().includes('espera'));
+                    if (!enEspera) return false;
+                    
+                    if (currentAuth && currentAuth.rol === 'medico') {
+                        const medAsig = (p.medico || '').toLowerCase();
+                        // Coincide si el médico asignado contiene alguna parte significativa del nombre del médico logueado
+                        const coincide = partesMed.some(part => medAsig.includes(part)) || medAsig.includes(medClean);
+                        return coincide;
+                    }
+                    return true;
+                });
                 
                 if (!lista || lista.length === 0) {
                     container.innerHTML = `
-                        <div class="alert alert-light border small text-muted py-2 mb-0">
-                            <i class="fa-solid fa-circle-info me-2"></i> No hay pacientes en sala de espera en este momento. Admita un nuevo paciente desde el rol de <strong>Admisionista</strong> para verlo aquí en tiempo real.
+                        <div class="alert alert-light border small text-muted py-3 mb-0 text-center">
+                            <i class="fa-solid fa-circle-check text-success me-2"></i> No tiene pacientes asignados en espera para <strong>${medNombre}</strong>.
+                            <br><span class="text-secondary" style="font-size: 0.8rem;">Cuando el Admisionista registre un paciente y se lo asigne a su nombre, aparecerá en esta lista inmediatamente.</span>
                         </div>
                     `;
                     return;
@@ -2759,8 +2787,15 @@ RXA|0|1|202611081200|202611081200|${med}^${pos}`;
             window.open(`/paciente/${doc}/bundle`, '_blank');
         }
 
-        // CARGAR REGISTROS DE AUDITORÍA DE ACCESOS A LA HISTORIA DEL PACIENTE
+        // CARGAR REGISTROS DE AUDITORÍA DE ACCESOS A LA HISTORIA DEL PACIENTE (SOLO VISTA PACIENTE)
         async function cargarAuditoriaAccesosPaciente(doc) {
+            const secAccesos = document.getElementById('secAccesosPaciente');
+            if (!secAccesos) return;
+            if (!currentAuth || currentAuth.rol !== 'paciente') {
+                secAccesos.classList.add('d-none');
+                return;
+            }
+            secAccesos.classList.remove('d-none');
             const tbody = document.getElementById('tablaAccesosPacienteBody');
             if (!tbody) return;
             try {
