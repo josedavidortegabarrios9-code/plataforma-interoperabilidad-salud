@@ -219,7 +219,7 @@ async def check_hapi_alive() -> bool:
 async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) -> Tuple[bool, str]:
     """
     Envía un Bundle a HAPI FHIR con reintentos y retroceso exponencial.
-    Si HAPI FHIR está apagado o no responde, reintenta y devuelve False.
+    Si HAPI FHIR está apagado o no responde, reintenta y devuelve False para desviar a DLQ.
     """
     if os.getenv("HAPI_DOWN", "false").lower() == "true":
         return False, "Servidor HAPI FHIR apagado para prueba de resiliencia"
@@ -228,25 +228,32 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
         return True, "Entregado a HAPI FHIR (Test Mode)"
 
     delay = 0.5
-    candidate_urls = [HAPI_FHIR_URL.rstrip('/'), "http://localhost:8090/fhir", "http://localhost:8080/fhir"]
-    endpoints_to_try = []
-    for u in dict.fromkeys(candidate_urls):
-        endpoints_to_try.extend([u, f"{u}/Bundle"])
+    candidate_urls = [
+        HAPI_FHIR_URL.rstrip('/'),
+        "http://127.0.0.1:8090/fhir",
+        "http://localhost:8090/fhir",
+        "http://127.0.0.1:8080/fhir",
+        "http://localhost:8080/fhir",
+        "http://hapi_fhir:8080/fhir"
+    ]
+    endpoints_to_try = list(dict.fromkeys(candidate_urls))
     last_err = "Servidor no responde"
 
     for attempt in range(1, max_retries + 1):
         for ep in endpoints_to_try:
             try:
-                async with httpx.AsyncClient(timeout=2.0) as client:
+                async with httpx.AsyncClient(timeout=8.0) as client:
                     res = await client.post(
                         ep,
                         json=bundle,
-                        headers={"Content-Type": "application/fhir+json"}
+                        headers={"Content-Type": "application/fhir+json", "Accept": "application/fhir+json"}
                     )
                     if res.status_code in (200, 201):
                         return True, "Entregado a HAPI FHIR"
+                    else:
+                        last_err = f"HTTP {res.status_code}"
             except Exception as e:
-                last_err = str(e)
+                last_err = str(e) or type(e).__name__
         await asyncio.sleep(delay)
         delay *= 1.5
 
