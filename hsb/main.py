@@ -1393,30 +1393,26 @@ async def serve_ui():
                 <strong id="twoFaEmailHint" class="text-dark">usuario@ips-salud.gov.co</strong>
             </div>
 
-            <p class="text-secondary small mb-3 text-center" style="font-size: 0.86rem; line-height: 1.4;">
-                Por seguridad clínica, consulte su buzón de correo institucional para obtener el código de acceso:
-            </p>
-
-            <div class="mb-3">
-                <button type="button" class="btn btn-outline-secondary btn-sm w-100 shadow-sm" onclick="consultarBuzonCorreoSimulado()">
-                    <i class="fa-solid fa-inbox me-2 text-primary"></i> Abrir Buzón de Correo Simulado
-                </button>
-            </div>
-
-            <div id="buzonSimuladoModal" class="alert alert-light border small d-none mb-3 p-3 text-start shadow-sm" style="background-color: #f8fafc;">
+            <!-- Bandeja de entrada simulada siempre visible -->
+            <div id="buzonSimuladoModal" class="alert alert-light border small mb-3 p-3 text-start shadow-sm" style="background-color: #f8fafc;">
                 <div class="d-flex justify-content-between align-items-center mb-1">
-                    <span class="fw-bold text-primary"><i class="fa-solid fa-envelope-circle-check me-1"></i> Mensaje de Seguridad IPS</span>
-                    <span class="badge bg-secondary">Recibido</span>
+                    <span class="fw-bold text-primary"><i class="fa-solid fa-inbox me-1"></i> Buzón de Correo Simulado (Webmail)</span>
+                    <span class="badge bg-success">Nuevo mensaje</span>
                 </div>
                 <div class="small text-muted mb-1" style="font-size: 0.78rem;"><strong>De:</strong> seguridad@ips-salud.gov.co</div>
-                <div class="small text-muted mb-2" style="font-size: 0.78rem;"><strong>Asunto:</strong> Su Código de Verificación 2FA</div>
+                <div class="small text-muted mb-2" style="font-size: 0.78rem;"><strong>Asunto:</strong> Su Código de Verificación de Segundo Factor (2FA)</div>
                 <div class="p-2 bg-white border rounded text-center my-2">
-                    <span class="text-muted small d-block">Código recibido:</span>
-                    <span class="fs-3 fw-bold font-monospace text-primary tracking-wider" id="buzonCodigoVal">------</span>
+                    <span class="text-muted small d-block">Código 2FA recibido:</span>
+                    <span class="fs-2 fw-bold font-monospace text-primary tracking-wider" id="buzonCodigoVal">------</span>
                 </div>
-                <button type="button" class="btn btn-primary btn-sm w-100 py-1 fw-semibold" onclick="autocompletarCodigo2FA()">
-                    <i class="fa-solid fa-arrow-down me-1"></i> Copiar Código al Formulario
-                </button>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm flex-fill" onclick="consultarBuzonCorreoSimulado()">
+                        <i class="fa-solid fa-arrows-rotate me-1"></i> Refrescar
+                    </button>
+                    <button type="button" class="btn btn-outline-primary btn-sm flex-fill" onclick="autocompletarCodigo2FA()">
+                        <i class="fa-solid fa-arrow-down me-1"></i> Usar Código
+                    </button>
+                </div>
             </div>
 
             <div id="twoFaError" class="alert alert-danger small py-2 d-none mb-3">
@@ -1425,9 +1421,10 @@ async def serve_ui():
 
             <form id="twoFaForm" onsubmit="verificarCodigo2FA(event)">
                 <div class="mb-3">
-                    <input type="text" id="input2faCode" class="form-control text-center fs-4 fw-bold font-monospace" placeholder="Código de 6 dígitos" maxlength="6" autocomplete="off" required>
+                    <label class="form-label small fw-semibold text-muted">Código de verificación (6 dígitos):</label>
+                    <input type="text" id="input2faCode" class="form-control text-center fs-3 fw-bold font-monospace" placeholder="000000" maxlength="6" autocomplete="off" required>
                 </div>
-                <button type="submit" id="btn2faSubmit" class="btn btn-primary w-100 py-2 fw-semibold fs-6 shadow-sm">
+                <button type="submit" id="btn2faSubmit" class="btn btn-primary w-100 py-2 fw-bold fs-6 shadow-sm">
                     <i class="fa-solid fa-lock-open me-2"></i> Validar 2FA y Entrar
                 </button>
             </form>
@@ -2148,10 +2145,11 @@ async def serve_ui():
                 document.getElementById('twoFactorScreen').classList.remove('d-none');
                 sessionStorage.setItem('pending_user', user);
                 if (document.getElementById('twoFaEmailHint')) document.getElementById('twoFaEmailHint').innerText = data.email || `${user}@ips-salud.gov.co`;
-                document.getElementById('input2faCode').value = '';
                 document.getElementById('twoFaError').classList.add('d-none');
-                document.getElementById('buzonSimuladoModal').classList.add('d-none');
-                document.getElementById('input2faCode').focus();
+                document.getElementById('input2faCode').value = '';
+                
+                // Consultar y precargar inmediatamente el código desde el buzón de correo institucional
+                consultarBuzonCorreoSimulado(user);
             } catch (e) {
                 console.error(e);
             } finally {
@@ -2161,6 +2159,43 @@ async def serve_ui():
         }
 
         // PASO 2: VERIFICACIÓN DEL CÓDIGO 2FA Y EMISIÓN DE JWT
+        
+        // FUNCIONES DE SOPORTE PARA BUZÓN DE CORREO 2FA (NIST SP 800-63B)
+        async function consultarBuzonCorreoSimulado(specificUser) {
+            const user = specificUser || pendingUser || sessionStorage.getItem('pending_user') || 'medico_ruiz';
+            try {
+                const res = await fetch(`/auth/mailbox/${encodeURIComponent(user)}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const msgs = data.mensajes || [];
+                if (msgs.length > 0) {
+                    const code = msgs[0].codigo_2fa;
+                    if (document.getElementById('buzonCodigoVal')) document.getElementById('buzonCodigoVal').innerText = code;
+                    if (document.getElementById('input2faCode')) {
+                        document.getElementById('input2faCode').value = code;
+                        document.getElementById('input2faCode').focus();
+                    }
+                }
+            } catch (e) {
+                console.error('Error consultando buzón simulado:', e);
+            }
+        }
+
+        function autocompletarCodigo2FA() {
+            const code = document.getElementById('buzonCodigoVal').innerText.trim();
+            if (code && code !== '------') {
+                document.getElementById('input2faCode').value = code;
+                document.getElementById('input2faCode').focus();
+            }
+        }
+
+        function volverALogin() {
+            document.getElementById('twoFactorScreen').classList.add('d-none');
+            document.getElementById('loginScreen').classList.remove('d-none');
+            document.getElementById('loginPass').value = '';
+            document.getElementById('loginPass').focus();
+        }
+
         async function verificarCodigo2FA(event) {
             if (event) event.preventDefault();
             const code = document.getElementById('input2faCode').value.trim();
