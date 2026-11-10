@@ -178,18 +178,21 @@ except Exception:
 
 
 async def check_hapi_alive() -> bool:
-    """Verifica físicamente si el servidor HAPI FHIR responde solicitudes HTTP."""
+    """Verifica físicamente si el servidor HAPI FHIR responde solicitudes HTTP (auto-detecta puertos 8090 y 8080)."""
     if os.getenv("HAPI_DOWN", "false").lower() == "true":
         return False
     if os.getenv("TEST_MODE", "false").lower() == "true":
         return True
-    try:
-        base_url = HAPI_FHIR_URL.rstrip('/')
-        async with httpx.AsyncClient(timeout=1.5) as client:
-            res = await client.get(f"{base_url}/metadata")
-            return res.status_code == 200
-    except Exception:
-        return False
+    urls_to_try = [HAPI_FHIR_URL.rstrip('/'), "http://localhost:8090/fhir", "http://localhost:8080/fhir"]
+    for base_url in dict.fromkeys(urls_to_try):
+        try:
+            async with httpx.AsyncClient(timeout=1.5) as client:
+                res = await client.get(f"{base_url}/metadata")
+                if res.status_code == 200:
+                    return True
+        except Exception:
+            continue
+    return False
 
 # --------------------------------------------------------------------------
 # Funciones de Soporte y Orquestación Downstream
@@ -206,8 +209,10 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
         return True, "Entregado a HAPI FHIR (Test Mode)"
 
     delay = 0.5
-    base_url = HAPI_FHIR_URL.rstrip('/')
-    endpoints_to_try = [base_url, f"{base_url}/Bundle"]
+    candidate_urls = [HAPI_FHIR_URL.rstrip('/'), "http://localhost:8090/fhir", "http://localhost:8080/fhir"]
+    endpoints_to_try = []
+    for u in dict.fromkeys(candidate_urls):
+        endpoints_to_try.extend([u, f"{u}/Bundle"])
     last_err = "Servidor no responde"
 
     for attempt in range(1, max_retries + 1):
