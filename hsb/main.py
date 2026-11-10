@@ -374,32 +374,6 @@ async def ingest_hl7(
 
     bundle = FHIRNormalizer.build_transaction_bundle(resources)
 
-    # 4. Envío a HAPI FHIR con Reintentos y Gestión Incondicional de Fallos (DLQ)
-    success, detail = await send_to_hapi_with_retry(bundle)
-
-    if not success:
-        performance_metrics["muertos_dlq"] += 1
-        dead_entry = {
-            "id_mensaje": msg_id,
-            "fecha": datetime.now().isoformat(),
-            "formato": "HL7 v2",
-            "sede": data["sede"],
-            "payload_raw": raw_body,
-            "bundle": bundle,
-            "motivo_muerte": detail
-        }
-        dead_letter_queue.append(dead_entry)
-        guardar_mensaje_bus(msg_id, "HL7 v2", data["sede"], payload_hash, "MUERTO_DLQ", raw_body)
-        audit_ledger.add_event("HSB_ROUTER", auth_user.get("rol", "SISTEMA"), "ENTREGA_FHIR", f"MSG_{msg_id}", "MUERTO_DLQ")
-        return JSONResponse(
-            status_code=503,
-            content={
-                "estado": "muerto",
-                "id_mensaje": msg_id,
-                "mensaje": f"Mensaje no pudo entregarse a HAPI FHIR tras reintentos y fue desviado a la cola de mensajes muertos (DLQ): {detail}"
-            }
-        )
-
     # 5. Persistencia y Actualización de Estado Clínico (Resiliencia Local)
     active_patients[doc] = {
         "documento": doc,
@@ -450,6 +424,33 @@ async def ingest_hl7(
             enc["estado"] = "Atendido"
             enc["triage"] = None
     clinical_encounters.insert(0, new_enc)
+
+
+    # 4. Envío a HAPI FHIR con Reintentos y Gestión Incondicional de Fallos (DLQ)
+    success, detail = await send_to_hapi_with_retry(bundle)
+
+    if not success:
+        performance_metrics["muertos_dlq"] += 1
+        dead_entry = {
+            "id_mensaje": msg_id,
+            "fecha": datetime.now().isoformat(),
+            "formato": "HL7 v2",
+            "sede": data["sede"],
+            "payload_raw": raw_body,
+            "bundle": bundle,
+            "motivo_muerte": detail
+        }
+        dead_letter_queue.append(dead_entry)
+        guardar_mensaje_bus(msg_id, "HL7 v2", data["sede"], payload_hash, "MUERTO_DLQ", raw_body)
+        audit_ledger.add_event("HSB_ROUTER", auth_user.get("rol", "SISTEMA"), "ENTREGA_FHIR", f"MSG_{msg_id}", "MUERTO_DLQ")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "estado": "muerto",
+                "id_mensaje": msg_id,
+                "mensaje": f"Mensaje no pudo entregarse a HAPI FHIR tras reintentos y fue desviado a la cola de mensajes muertos (DLQ): {detail}"
+            }
+        )
 
     # Verificación Store-and-Forward: Si la sede está caída, encolar para reintento y responder 'reintentando'
     if not check_sede_alive(data["sede"]):
@@ -991,6 +992,19 @@ async def export_patient_bundle(documento: str):
 # --------------------------------------------------------------------------
 # Gestión de Pacientes y Asignación Clínica (Flujo Asistencial Fase 4)
 # --------------------------------------------------------------------------
+@app.post("/api/paciente/{documento}/atender")
+async def marcar_paciente_en_consulta(documento: str):
+    """Marca los episodios del paciente como Atendido para retirarlo de la sala de espera al pasar a consulta médica."""
+    doc_clean = str(documento).strip()
+    encontrado = False
+    for enc in clinical_encounters:
+        if str(enc.get("documento")) == doc_clean:
+            enc["estado"] = "Atendido"
+            enc["triage"] = None
+            encontrado = True
+    audit_ledger.add_event(f"DOC_{doc_clean}", "MEDICO", "PASAR_A_CONSULTA", f"Patient/pac-{doc_clean}", "ATENDIDO")
+    return {"status": "ok", "documento": doc_clean, "atendido": encontrado}
+
 @app.get("/api/pacientes")
 async def list_federated_patients():
     """Lista dinámica de pacientes federados en las 3 sedes con gestión precisa de sala de espera."""
@@ -2830,7 +2844,7 @@ RXA|0|1|202611081200|202611081200|${med}^${pos}`;
         }
 
         // AUTO-LLENADO DE FORMULARIO DE CONSULTA / REGISTRO MÉDICO
-        function cargarDatosPacienteEnFormulario(doc, nombre, apellido, nacimiento, sexo, sedeNombre) {
+        async function cargarDatosPacienteEnFormulario(doc, nombre, apellido, nacimiento, sexo, sedeNombre) {
             if (document.getElementById('regDoc')) document.getElementById('regDoc').value = doc;
             if (document.getElementById('regNombre')) document.getElementById('regNombre').value = nombre;
             if (document.getElementById('regApellido')) document.getElementById('regApellido').value = apellido;
@@ -2841,6 +2855,17 @@ RXA|0|1|202611081200|202611081200|${med}^${pos}`;
             if (sedeNombre && sedeNombre.toString().toLowerCase().includes('cartagena')) sedeVal = '2';
             else if (sedeNombre && sedeNombre.toString().toLowerCase().includes('corozal')) sedeVal = '3';
             if (document.getElementById('regSede')) document.getElementById('regSede').value = sedeVal;
+
+            // Retirar inmediatamente de la sala de espera al pasar al paciente a consulta médica
+            try {
+                await fetch(`/api/paciente/${doc}/atender`, {
+                    method: 'POST',
+                    headers: getAuthHeaders()
+                });
+                cargarPacientesAsignadosMedico();
+            } catch (e) {
+                console.warn('No se pudo marcar atendido:', e);
+            }
 
             const form = document.getElementById('formCrearRegistroMedico');
             if (form) {
