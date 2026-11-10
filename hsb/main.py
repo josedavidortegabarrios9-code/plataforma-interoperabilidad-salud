@@ -242,18 +242,22 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
     for attempt in range(1, max_retries + 1):
         for ep in endpoints_to_try:
             try:
-                async with httpx.AsyncClient(timeout=8.0) as client:
+                async with httpx.AsyncClient(timeout=10.0) as client:
                     res = await client.post(
                         ep,
                         json=bundle,
                         headers={"Content-Type": "application/fhir+json", "Accept": "application/fhir+json"}
                     )
                     if res.status_code in (200, 201):
+                        logger.info(f"[HAPI_FHIR] Bundle entregado exitosamente a {ep} (HTTP {res.status_code})")
                         return True, "Entregado a HAPI FHIR"
                     else:
-                        last_err = f"HTTP {res.status_code}"
+                        err_snippet = res.text[:120].replace('\n', ' ')
+                        last_err = f"HTTP {res.status_code} ({err_snippet})"
+                        logger.warning(f"[HAPI_FHIR] Intento {attempt} a {ep} respondió: {last_err}")
             except Exception as e:
                 last_err = str(e) or type(e).__name__
+                logger.warning(f"[HAPI_FHIR] Error conectando a {ep}: {last_err}")
         await asyncio.sleep(delay)
         delay *= 1.5
 
