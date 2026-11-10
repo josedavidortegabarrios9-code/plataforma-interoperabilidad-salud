@@ -53,14 +53,26 @@ def check_sede_alive(sede_id: int) -> bool:
         return False
 
     # 2. Verificación de socket de red (detecta si el contenedor o servicio cayó con docker stop)
+    targets = []
     try:
         parsed = urlparse(db_url)
-        host = parsed.hostname or f"pg_sede{sede_id}"
-        port = parsed.port or (5430 + sede_id)
-        with socket.create_connection((host, port), timeout=0.8):
-            pass
+        if parsed.hostname:
+            targets.append((parsed.hostname, parsed.port or 5432))
     except Exception:
-        # Falló la conexión al puerto de la base de datos (contenedor detenido)
+        pass
+    targets.append(("127.0.0.1", 5430 + sede_id))
+    targets.append(("localhost", 5430 + sede_id))
+
+    connected = False
+    for h, p in targets:
+        try:
+            with socket.create_connection((h, p), timeout=0.8):
+                connected = True
+                break
+        except Exception:
+            continue
+
+    if not connected:
         return False
 
     # 3. Si psycopg2 está instalado, verificar consulta básica

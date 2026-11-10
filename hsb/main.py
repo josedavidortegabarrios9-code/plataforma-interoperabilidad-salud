@@ -178,20 +178,39 @@ except Exception:
 
 
 async def check_hapi_alive() -> bool:
-    """Verifica físicamente si el servidor HAPI FHIR responde solicitudes HTTP (auto-detecta puertos 8090 y 8080)."""
+    """Verifica si el servidor HAPI FHIR responde solicitudes HTTP o si su socket TCP está activo (8090 o 8080)."""
     if os.getenv("HAPI_DOWN", "false").lower() == "true":
         return False
     if os.getenv("TEST_MODE", "false").lower() == "true":
         return True
-    urls_to_try = [HAPI_FHIR_URL.rstrip('/'), "http://localhost:8090/fhir", "http://localhost:8080/fhir"]
+
+    # 1. Verificación HTTP activa
+    urls_to_try = [
+        HAPI_FHIR_URL.rstrip('/'),
+        "http://127.0.0.1:8090/fhir",
+        "http://localhost:8090/fhir",
+        "http://127.0.0.1:8080/fhir",
+        "http://localhost:8080/fhir",
+        "http://hapi_fhir:8080/fhir"
+    ]
     for base_url in dict.fromkeys(urls_to_try):
+        for path in ["/metadata", ""]:
+            try:
+                async with httpx.AsyncClient(timeout=1.5) as client:
+                    res = await client.get(f"{base_url}{path}")
+                    if res.status_code in (200, 201, 400, 401):
+                        return True
+            except Exception:
+                continue
+
+    # 2. Verificación de socket TCP directa
+    for p in (8090, 8080):
         try:
-            async with httpx.AsyncClient(timeout=1.5) as client:
-                res = await client.get(f"{base_url}/metadata")
-                if res.status_code == 200:
-                    return True
+            with socket.create_connection(("127.0.0.1", p), timeout=0.8):
+                return True
         except Exception:
             continue
+
     return False
 
 # --------------------------------------------------------------------------
