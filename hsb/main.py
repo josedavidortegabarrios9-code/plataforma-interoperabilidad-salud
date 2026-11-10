@@ -441,9 +441,15 @@ async def ingest_hl7(
         "egreso": {
             "destino": egreso_destino or "Alta médica con tratamiento ambulatorio",
             "sello": hashlib.sha256(f"{doc}-{data['encounter_id']}-EGRESO".encode()).hexdigest()
-        }
+        },
+        "estado": "Atendido"
     }
-    clinical_encounters.append(new_enc)
+    # Al registrar el médico la atención y egreso, el paciente pasa de espera a 'Atendido'
+    for enc in clinical_encounters:
+        if enc.get("documento") == doc:
+            enc["estado"] = "Atendido"
+            enc["triage"] = None
+    clinical_encounters.insert(0, new_enc)
 
     # Verificación Store-and-Forward: Si la sede está caída, encolar para reintento y responder 'reintentando'
     if not check_sede_alive(data["sede"]):
@@ -987,12 +993,16 @@ async def export_patient_bundle(documento: str):
 # --------------------------------------------------------------------------
 @app.get("/api/pacientes")
 async def list_federated_patients():
-    """Lista dinámica de pacientes federados en las 3 sedes."""
+    """Lista dinámica de pacientes federados en las 3 sedes con gestión precisa de sala de espera."""
     pacientes_list = []
     for doc, pat in active_patients.items():
         atns = [e for e in clinical_encounters if e["documento"] == doc]
         sedes = sorted(list({a["sede_nombre"] for a in atns}))
-        ultimo_enc = atns[0] if atns else {}
+        
+        # Buscar si tiene un episodio activo no atendido en sala de espera
+        atn_espera = next((a for a in atns if a.get("estado") == "En espera de atención médica" and a.get("triage")), None)
+        ultimo_enc = atn_espera if atn_espera else (atns[0] if atns else {})
+
         pacientes_list.append({
             "documento": doc,
             "tipo_documento": pat.get("tipo_documento", "CC"),
@@ -1004,10 +1014,10 @@ async def list_federated_patients():
             "sedes": sedes or ["Sincelejo"],
             "total_atenciones": len(atns),
             "medico_asignado": ultimo_enc.get("medico", "Dr. Mateo Ruiz"),
-            "triage": ultimo_enc.get("triage", "3"),
+            "triage": ultimo_enc.get("triage") if atn_espera else None,
             "motivo": ultimo_enc.get("motivo", "Atención asistencial"),
             "fecha_admision": ultimo_enc.get("fecha", datetime.now().isoformat()),
-            "estado": ultimo_enc.get("estado", "En espera de atención médica")
+            "estado": "En espera de atención médica" if atn_espera else "Atendido"
         })
     return sorted(pacientes_list, key=lambda x: x["fecha_admision"], reverse=True)
 
