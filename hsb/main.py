@@ -1148,6 +1148,60 @@ async def verify_audit_chain():
     """
     return audit_ledger.verify_integrity()
 
+@app.post("/audit/reset")
+async def reset_audit_integrity():
+    """Restaura la integridad de la cadena recalculando los hashes correctos."""
+    prev_hash = "0" * 64
+    for event in audit_ledger.events:
+        event["hash_previo"] = prev_hash
+        event["hash_actual"] = audit_ledger.calculate_hash(
+            event.get("timestamp") or event.get("fecha_hora", ""),
+            event.get("actor") or event.get("actor_username", ""),
+            event.get("rol") or event.get("rol_actor", ""),
+            event.get("accion", ""),
+            event.get("recurso") or event.get("recurso_afectado", ""),
+            event.get("resultado", ""),
+            prev_hash
+        )
+        prev_hash = event["hash_actual"]
+    return {"status": "ok", "mensaje": "Cadena criptográfica re-sincronizada y restaurada como íntegra"}
+
+@app.post("/test/simular-duplicado")
+async def test_simular_duplicado():
+    """Envía un mensaje con ID fijo 'MSG-DEMO-IDEMPOTENCIA' para disparar la detección de duplicados."""
+    sample_hl7 = (
+        "MSH|^~\\&|HIS_SEDE2|SEDE2|HSB|CENTRAL|20261108120000||ADT^A01|MSG-DEMO-IDEMPOTENCIA|P|2.5\r"
+        "PID|1||1007^^^HIS||Rojas^Andrea||19900214|F\r"
+        "PV1|1|E|||||MED-02^Ruiz^Mateo||||||||||||V-S2-0999|||||||||||||||||||||||||202611081200\r"
+        "DG1|1||J45.9^Asma^I10||20261108|A"
+    )
+    raw_body = sample_hl7
+    data, reasons = HL7Parser.validate_and_extract_hl7(raw_body)
+    msg_id = data["id_mensaje"]
+    payload_hash = hashlib.sha256(raw_body.encode("utf-8")).hexdigest()
+
+    if msg_id in processed_messages or payload_hash in processed_messages or check_mensaje_bus(msg_id, payload_hash):
+        performance_metrics["duplicados"] += 1
+        audit_ledger.add_event("HSB_IDEMPOTENCY", "AUDITOR", "REINTENTO_HL7", f"MSG_{msg_id}", "DUPLICADO")
+        return {
+            "estado": "duplicado",
+            "id_mensaje": msg_id,
+            "duplicados_total": performance_metrics["duplicados"],
+            "mensaje": f"Mensaje {msg_id} ya existía previamente. Idempotencia aplicada: contador incrementado."
+        }
+    else:
+        processed_messages[msg_id] = {"timestamp": time.time(), "doc": "1007", "sede": 2}
+        processed_messages[payload_hash] = processed_messages[msg_id]
+        performance_metrics["total_recibidos"] += 1
+        performance_metrics["entregados"] += 1
+        audit_ledger.add_event("HSB_ROUTER", "AUDITOR", "ENTREGA_HL7_FHIR", "Patient/pac-1007", "ENTREGADO")
+        return {
+            "estado": "primer_envio",
+            "id_mensaje": msg_id,
+            "duplicados_total": performance_metrics["duplicados"],
+            "mensaje": "Primer envío de MSG-DEMO-IDEMPOTENCIA registrado. Vuelva a presionar el botón para ver la detección del duplicado."
+        }
+
 @app.post("/audit/tamper")
 async def tamper_audit_simulation(evento_id: int = Query(..., description="ID del evento a alterar")):
     """
@@ -1867,6 +1921,9 @@ async def serve_ui():
                             <div class="card p-3 text-center border-0 shadow-sm border-start border-warning border-4">
                                 <small class="text-muted fw-bold">DUPLICADOS (IDEMPOTENCIA)</small>
                                 <h3 class="fw-bold mb-0 text-warning" id="metricDuplicados">0</h3>
+                                <button class="btn btn-outline-warning btn-sm py-0 px-2 mt-2" onclick="probarIdempotenciaDuplicado()" title="Simula el reenvío del mismo mensaje para probar idempotencia">
+                                    <i class="fa-solid fa-copy me-1"></i> Probar Duplicado
+                                </button>
                             </div>
                         </div>
                         <div class="col-md-3">
@@ -1882,15 +1939,15 @@ async def serve_ui():
                             <div class="card p-4 border-0 shadow-sm">
                                 <h5 class="fw-bold mb-3"><i class="fa-solid fa-server me-2"></i>Estado de Nodos (Tolerancia a Fallos)</h5>
                                 <div class="d-flex justify-content-between align-items-center mb-2">
-                                    <span><span id="dot1" class="status-dot dot-green"></span> Sede 1: Sincelejo (Puerto 5431)</span>
+                                    <span><span id="dot1" class="status-dot dot-green"></span> Sede 1: Sincelejo (Puerto 5433)</span>
                                     <button class="btn btn-outline-danger btn-sm" onclick="toggleSede(1)">Conmutar Caída</button>
                                 </div>
                                 <div class="d-flex justify-content-between align-items-center mb-2">
-                                    <span><span id="dot2" class="status-dot dot-green"></span> Sede 2: Cartagena (Puerto 5432)</span>
+                                    <span><span id="dot2" class="status-dot dot-green"></span> Sede 2: Cartagena (Puerto 5434)</span>
                                     <button class="btn btn-outline-danger btn-sm" onclick="toggleSede(2)">Conmutar Caída</button>
                                 </div>
                                 <div class="d-flex justify-content-between align-items-center mb-2">
-                                    <span><span id="dot3" class="status-dot dot-green"></span> Sede 3: Corozal (Puerto 5433)</span>
+                                    <span><span id="dot3" class="status-dot dot-green"></span> Sede 3: Corozal (Puerto 5435)</span>
                                     <button class="btn btn-outline-danger btn-sm" onclick="toggleSede(3)">Conmutar Caída</button>
                                 </div>
                             </div>
@@ -1901,8 +1958,9 @@ async def serve_ui():
                                 <div id="auditStatusBox" class="alert alert-success py-2 mb-3">
                                     <i class="fa-solid fa-circle-check me-1"></i> Cadena Íntegra verificada (SHA-256).
                                 </div>
-                                <div class="d-flex gap-2 mb-3">
+                                <div class="d-flex flex-wrap gap-2 mb-3">
                                     <button class="btn btn-sm btn-outline-danger" onclick="simularAlteracionMaliciosa()"><i class="fa-solid fa-bug me-1"></i> Simular Alteración Maliciosa</button>
+                                    <button class="btn btn-sm btn-outline-success" onclick="restaurarAuditoria()"><i class="fa-solid fa-shield-halved me-1"></i> Restaurar Integridad</button>
                                     <button class="btn btn-sm btn-outline-secondary" onclick="verificarAuditoria()"><i class="fa-solid fa-arrows-rotate me-1"></i> Re-verificar</button>
                                 </div>
                                 <div class="p-2 bg-light rounded mono-font" style="max-height: 140px; overflow-y: auto; font-size: 0.75rem;" id="auditLogText"></div>
@@ -2699,8 +2757,30 @@ RXA|0|1|202611081200|202611081200|${med}^${pos}`;
 
         async function simularAlteracionMaliciosa() {
             await fetch('/audit/tamper?evento_id=1', { method: 'POST' });
-            alert('Registro 1 de auditoría alterado deliberadamente. Presione Re-verificar para ver la detección.');
+            alert('Registro 1 de auditoría alterado deliberadamente. Presione Re-verificar para ver la detección en rojo.');
             verificarAuditoria();
+        }
+
+        async function restaurarAuditoria() {
+            try {
+                const res = await fetch('/audit/reset', { method: 'POST' });
+                const data = await res.json();
+                alert('Integridad criptográfica restaurada: ' + data.mensaje);
+                verificarAuditoria();
+            } catch (e) {
+                alert('Error al restaurar integridad');
+            }
+        }
+
+        async function probarIdempotenciaDuplicado() {
+            try {
+                const res = await fetch('/test/simular-duplicado', { method: 'POST' });
+                const data = await res.json();
+                alert((data.estado === 'duplicado' ? '✅ IDEMPOTENCIA DETECTADA: ' : 'ℹ️ PRIMER ENVÍO: ') + data.mensaje);
+                actualizarMetricas();
+            } catch (e) {
+                alert('Error al probar duplicado');
+            }
         }
     
         // GESTIÓN DE PACIENTES ASIGNADOS AL MÉDICO (SALA DE ESPERA FILTRADA POR PROFESIONAL)
