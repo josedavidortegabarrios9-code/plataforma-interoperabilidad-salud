@@ -1385,71 +1385,133 @@ async def serve_ui():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Clínica Central - Plataforma de Interoperabilidad Clínica</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
-            --primary-blue: #1e60d5;
-            --sidebar-blue: #2a69d8;
-            --brand-green: #15803d;
+            --primary-blue: #2563eb;
+            --primary-dark: #1d4ed8;
+            --primary-gradient: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+            --sidebar-gradient: linear-gradient(180deg, #1e3a8a 0%, #0f172a 100%);
+            --brand-green: #059669;
             --bg-light: #f8fafc;
+            --card-border: #e2e8f0;
+            --text-dark: #0f172a;
+            --text-muted: #64748b;
         }
-        body { background-color: var(--bg-light); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
+        * { box-sizing: border-box; }
+        body {
+            background-color: var(--bg-light);
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: var(--text-dark);
+            margin: 0;
+            padding: 0;
+            -webkit-font-smoothing: antialiased;
+        }
         
-        /* 1. ESTILOS 2FA (IDÉNTICO A LA CAPTURA) */
-        .twofa-wrapper {
+        /* 1. LOGIN & 2FA STYLING */
+        .login-wrapper {
             min-height: 100vh;
-            background: radial-gradient(circle at 10% 90%, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.1) 15%, transparent 35%),
-                        radial-gradient(circle at 5% 95%, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0.08) 25%, transparent 45%),
-                        linear-gradient(135deg, #2b70e4 0%, #1d4ed8 100%);
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 20px;
+            padding: 24px;
+            background: radial-gradient(circle at 10% 20%, rgba(37, 99, 235, 0.08) 0%, transparent 40%),
+                        radial-gradient(circle at 90% 80%, rgba(5, 150, 105, 0.08) 0%, transparent 40%),
+                        #f1f5f9;
+        }
+        .login-card {
+            background: #ffffff;
+            border-radius: 16px;
+            border: 1px solid var(--card-border);
+            box-shadow: 0 20px 40px -10px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(0,0,0,0.05);
+            width: 100%;
+            max-width: 440px;
+            padding: 36px 32px;
+            animation: fadeIn 0.3s ease;
+        }
+        .twofa-wrapper {
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
         }
         .twofa-card {
             background: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.18);
+            border-radius: 16px;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.35);
             width: 100%;
-            max-width: 440px;
+            max-width: 460px;
             padding: 38px 32px;
+            animation: fadeIn 0.3s ease;
         }
         
-        /* 2. ESTILOS CLÍNICA CENTRAL (IDÉNTICO A LA CAPTURA) */
+        /* 2. APP LAYOUT */
         .app-layout { display: flex; min-height: 100vh; }
         .sidebar {
-            width: 230px;
-            background: #2a69d8;
+            width: 250px;
+            background: var(--sidebar-gradient);
             color: #ffffff;
             display: flex;
             flex-direction: column;
-            transition: all 0.3s;
+            transition: all 0.3s ease;
             flex-shrink: 0;
+            box-shadow: 4px 0 24px rgba(15, 23, 42, 0.12);
+            z-index: 20;
         }
-        .sidebar-header { padding: 18px 20px; font-size: 1rem; font-weight: 600; display: flex; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); }
-        .sidebar-heading { font-size: 0.72rem; text-transform: uppercase; color: rgba(255,255,255,0.65); padding: 18px 20px 8px 20px; letter-spacing: 0.8px; font-weight: 700; }
+        .sidebar-header {
+            padding: 20px 22px;
+            font-size: 1.05rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            letter-spacing: -0.2px;
+        }
+        .sidebar-heading {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.55);
+            padding: 20px 22px 8px 22px;
+            letter-spacing: 1px;
+            font-weight: 700;
+        }
         .sidebar-menu { list-style: none; padding: 0; margin: 0; }
         .sidebar-menu li a {
             display: flex;
             align-items: center;
-            padding: 11px 20px;
-            color: rgba(255,255,255,0.9);
+            padding: 11px 16px;
+            margin: 4px 12px;
+            color: rgba(255,255,255,0.85);
             text-decoration: none;
             font-size: 0.88rem;
+            font-weight: 500;
+            border-radius: 10px;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
         }
-        .sidebar-menu li a:hover, .sidebar-menu li a.active {
-            background: rgba(255,255,255,0.18);
+        .sidebar-menu li a:hover {
+            background: rgba(255,255,255,0.12);
+            color: #ffffff;
+            transform: translateX(3px);
+        }
+        .sidebar-menu li a.active {
+            background: #2563eb;
             color: #ffffff;
             font-weight: 600;
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
         }
         .sidebar-toggle-btn {
             margin: auto auto 20px 20px;
             width: 32px;
             height: 32px;
-            background: rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.15);
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -1457,49 +1519,158 @@ async def serve_ui():
             color: white;
             cursor: pointer;
             border: none;
+            transition: background 0.2s;
         }
+        .sidebar-toggle-btn:hover { background: rgba(255,255,255,0.25); }
 
-        .main-container { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+        .main-container { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #f8fafc; }
         .topbar {
-            height: 60px;
-            background: #ffffff;
-            border-bottom: 1px solid #e2e8f0;
+            height: 64px;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid var(--card-border);
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 24px;
+            padding: 0 28px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
         }
-        .brand-logo-text { color: var(--brand-green); font-size: 1.45rem; font-weight: 800; letter-spacing: -0.3px; }
-        .brand-underline { height: 3px; width: 42px; background: var(--brand-green); margin-top: -3px; }
+        .brand-logo-text { color: var(--brand-green); font-size: 1.45rem; font-weight: 800; letter-spacing: -0.4px; }
+        .brand-underline { height: 3px; width: 44px; background: var(--brand-green); border-radius: 2px; margin-top: -3px; }
         
-        .content-area { padding: 24px 35px; flex: 1; overflow-y: auto; }
-        .form-section-title { color: #64748b; font-size: 1.15rem; font-style: italic; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; margin-top: 24px; margin-bottom: 18px; }
-        .form-label-custom { font-size: 0.82rem; color: #475569; font-weight: 500; margin-bottom: 4px; }
+        .content-area { padding: 28px 36px; flex: 1; overflow-y: auto; }
+        
+        /* 3. CARD & FORM STYLING */
+        .card-modern {
+            background: #ffffff;
+            border-radius: 14px;
+            border: 1px solid var(--card-border);
+            box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.04), 0 2px 6px -1px rgba(15, 23, 42, 0.02);
+            transition: all 0.25s ease;
+        }
+        .metric-card {
+            background: #ffffff;
+            border-radius: 14px;
+            border: 1px solid var(--card-border);
+            padding: 22px 20px;
+            box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.04);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+        .metric-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 12px 28px -4px rgba(15, 23, 42, 0.09);
+        }
+
+        .form-section-title {
+            color: #0f172a;
+            font-size: 1.05rem;
+            font-weight: 700;
+            font-style: normal;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 10px;
+            margin-top: 26px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .form-section-title::before {
+            content: "";
+            display: inline-block;
+            width: 4px;
+            height: 18px;
+            background: #2563eb;
+            border-radius: 2px;
+        }
+        .form-label-custom {
+            font-size: 0.8rem;
+            color: #475569;
+            font-weight: 600;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
         .form-control-custom, .form-select-custom {
-            font-size: 0.85rem;
-            border-radius: 5px;
-            border: 1px solid #cbd5e1;
-            padding: 8px 12px;
+            font-size: 0.88rem;
+            border-radius: 8px;
+            border: 1.5px solid #cbd5e1;
+            padding: 9px 13px;
             background-color: #ffffff;
+            transition: all 0.2s ease;
         }
         .form-control-custom:focus, .form-select-custom:focus {
-            border-color: var(--primary-blue);
-            box-shadow: 0 0 0 2px rgba(37,99,235,0.15);
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+            outline: none;
         }
-        .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
-        .dot-green { background-color: #28a745; }
-        .dot-red { background-color: #dc3545; }
-        .mono-font { font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, monospace; }
+
+        /* 4. BUTTONS & TABLES */
+        .btn {
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+        .btn-primary {
+            background: var(--primary-gradient);
+            border: none;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+        }
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+            box-shadow: 0 6px 16px rgba(37, 99, 235, 0.35);
+            transform: translateY(-1px);
+        }
+        .table thead th {
+            background: #f1f5f9;
+            color: #475569;
+            font-size: 0.78rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 2px solid #e2e8f0;
+            padding: 12px 14px;
+        }
+        .table tbody td {
+            padding: 12px 14px;
+            border-bottom: 1px solid #f1f5f9;
+            vertical-align: middle;
+        }
+        .table-hover tbody tr:hover {
+            background-color: #f8fafc;
+        }
+
+        .status-dot {
+            height: 10px;
+            width: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+        .dot-green { background-color: #10b981; box-shadow: 0 0 8px rgba(16, 185, 129, 0.5); }
+        .dot-red { background-color: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
+        .mono-font { font-family: 'JetBrains Mono', Consolas, monospace; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
 </head>
 <body>
 
     <!-- 1. PANTALLA DE LOGIN CON CREDENCIALES (PASO 1) -->
-    <div id="loginScreen" class="container py-5">
-        <div class="card p-4 mx-auto shadow-sm" style="max-width: 430px; border-radius: 10px; border: 1px solid #e2e8f0;">
+    <div id="loginScreen" class="login-wrapper">
+        <div class="login-card">
             <div class="text-center mb-4">
-                <h3 class="fw-bold mb-1" style="color: var(--brand-green);">Clínica Central</h3>
-                <p class="text-muted small">Red de IPS Interoperable • Iniciar Sesión Asistencial</p>
+                <div class="d-inline-flex align-items-center justify-content-center p-3 rounded-circle mb-3" style="background: rgba(37, 99, 235, 0.1); width: 64px; height: 64px;">
+                    <i class="fa-solid fa-hospital-user fs-2 text-primary"></i>
+                </div>
+                <h3 class="fw-bold mb-1" style="color: var(--brand-green); letter-spacing: -0.5px;">Clínica Central</h3>
+                <p class="text-muted small mb-0">Red de IPS Interoperable • Iniciar Sesión Asistencial</p>
             </div>
 
             <div id="loginError" class="alert alert-danger small py-2 d-none">
@@ -1681,7 +1852,7 @@ async def serve_ui():
                 <!-- SECCIÓN 1: CREAR REGISTRO MÉDICO (IDÉNTICO A LA CAPTURA) -->
                 <div id="secCrearRegistro">
                     <!-- BANNER SALA DE ESPERA / PACIENTES ASIGNADOS AL MÉDICO -->
-                    <div id="bannerPacientesAsignados" class="card mb-3 border-0 shadow-sm" style="border-left: 4px solid #0d6efd !important; background-color: #f8faff;">
+                    <div id="bannerPacientesAsignados" class="card-modern mb-3 p-2" style="border-left: 5px solid #2563eb !important; background: linear-gradient(135deg, #f8faff 0%, #ffffff 100%);">
                         <div class="card-body p-3">
                             <div class="d-flex justify-content-between align-items-center mb-1">
                                 <h6 class="fw-bold mb-0 text-primary">
@@ -1704,6 +1875,7 @@ async def serve_ui():
                         <i class="fa-solid fa-circle-check me-2"></i> <strong>Registro Creado:</strong> Datos clínicos normalizados a FHIR R4 e integrados vía HSB.
                     </div>
 
+                    <div class="card-modern p-4 shadow-sm mb-4">
                     <form id="formCrearRegistroMedico" onsubmit="guardarRegistroClinico(event)">
                         
                         <div class="form-section-title">Identificación del usuario de los servicios de salud</div>
@@ -1907,6 +2079,7 @@ async def serve_ui():
                             <i class="fa-solid fa-floppy-disk me-2"></i> Guardar Atención, Registrar Egreso y Sellar en HSB
                         </button>
                     </form>
+                    </div>
                 </div>
 
                 <!-- SECCIÓN 2: CONSULTAR HISTORIAL MÉDICO (HISTORIA UNIFICADA) -->
@@ -1925,7 +2098,7 @@ async def serve_ui():
                         <i class="fa-solid fa-triangle-exclamation me-2"></i> <strong>Modo Degradado Resiliente:</strong> Una de las sedes está inactiva. Se muestran registros de las sedes operativas sin interrumpir el servicio médico.
                     </div>
 
-                    <div class="card p-4 border-0 shadow-sm">
+                    <div class="card-modern p-4">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <div>
                                 <h5 class="fw-bold mb-0" id="historialNombrePaciente">Paciente: Carlos Perez (CC 1001)</h5>
@@ -1978,7 +2151,7 @@ async def serve_ui():
                             <i class="fa-solid fa-arrows-rotate me-1"></i> Actualizar Listado
                         </button>
                     </div>
-                    <div class="card p-3 border-0 shadow-sm">
+                    <div class="card-modern p-4">
                         <div class="table-responsive">
                             <table class="table table-hover align-middle mb-0">
                                 <thead class="table-light">
@@ -2002,38 +2175,63 @@ async def serve_ui():
                     </div>
                     <div class="row g-3 mb-4">
                         <div class="col-md-3">
-                            <div class="card p-3 text-center border-0 shadow-sm border-start border-primary border-4">
-                                <small class="text-muted fw-bold">TOTAL MENSAJES HSB</small>
-                                <h3 class="fw-bold mb-0 text-primary" id="metricTotal">0</h3>
+                            <div class="metric-card border-start border-primary border-4">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <small class="text-muted fw-bold text-uppercase" style="font-size: 0.72rem; letter-spacing: 0.5px;">Total Mensajes</small>
+                                    <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 34px; height: 34px; background: rgba(37,99,235,0.1);">
+                                        <i class="fa-solid fa-tower-broadcast text-primary" style="font-size: 0.9rem;"></i>
+                                    </div>
+                                </div>
+                                <h2 class="fw-bold mb-0 text-primary" id="metricTotal">0</h2>
+                                <small class="text-muted" style="font-size: 0.75rem;">Tráfico total en bus HSB</small>
                             </div>
                         </div>
                         <div class="col-md-3">
-                            <div class="card p-3 text-center border-0 shadow-sm border-start border-success border-4">
-                                <small class="text-muted fw-bold">ENTREGADOS EXITOSOS</small>
-                                <h3 class="fw-bold mb-0 text-success" id="metricEntregados">0</h3>
+                            <div class="metric-card border-start border-success border-4">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <small class="text-muted fw-bold text-uppercase" style="font-size: 0.72rem; letter-spacing: 0.5px;">Entregados FHIR</small>
+                                    <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 34px; height: 34px; background: rgba(16,185,129,0.1);">
+                                        <i class="fa-solid fa-circle-check text-success" style="font-size: 0.9rem;"></i>
+                                    </div>
+                                </div>
+                                <h2 class="fw-bold mb-0 text-success" id="metricEntregados">0</h2>
+                                <small class="text-muted" style="font-size: 0.75rem;">Persistidos exitosamente</small>
                             </div>
                         </div>
                         <div class="col-md-3">
-                            <div class="card p-3 text-center border-0 shadow-sm border-start border-warning border-4">
-                                <small class="text-muted fw-bold">DUPLICADOS (IDEMPOTENCIA)</small>
-                                <h3 class="fw-bold mb-0 text-warning" id="metricDuplicados">0</h3>
-                                <button class="btn btn-outline-warning btn-sm py-0 px-2 mt-2" onclick="probarIdempotenciaDuplicado()" title="Simula el reenvío del mismo mensaje para probar idempotencia">
-                                    <i class="fa-solid fa-copy me-1"></i> Probar Duplicado
-                                </button>
+                            <div class="metric-card border-start border-warning border-4">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <small class="text-muted fw-bold text-uppercase" style="font-size: 0.72rem; letter-spacing: 0.5px;">Idempotencia</small>
+                                    <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 34px; height: 34px; background: rgba(245,158,11,0.1);">
+                                        <i class="fa-solid fa-copy text-warning" style="font-size: 0.9rem;"></i>
+                                    </div>
+                                </div>
+                                <h2 class="fw-bold mb-0 text-warning" id="metricDuplicados">0</h2>
+                                <div class="mt-2">
+                                    <button class="btn btn-outline-warning btn-sm py-1 px-2 w-100 fw-semibold" style="font-size: 0.78rem;" onclick="probarIdempotenciaDuplicado()" title="Simula el reenvío del mismo mensaje para probar idempotencia">
+                                        <i class="fa-solid fa-copy me-1"></i> Probar Duplicado
+                                    </button>
+                                </div>
                             </div>
                         </div>
                         <div class="col-md-3">
-                            <div class="card p-3 text-center border-0 shadow-sm border-start border-danger border-4">
-                                <small class="text-muted fw-bold">TASA DE FALLOS</small>
-                                <h3 class="fw-bold mb-0 text-danger" id="metricFallidos">0%</h3>
+                            <div class="metric-card border-start border-danger border-4">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <small class="text-muted fw-bold text-uppercase" style="font-size: 0.72rem; letter-spacing: 0.5px;">Tasa de Fallos</small>
+                                    <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 34px; height: 34px; background: rgba(239,68,68,0.1);">
+                                        <i class="fa-solid fa-triangle-exclamation text-danger" style="font-size: 0.9rem;"></i>
+                                    </div>
+                                </div>
+                                <h2 class="fw-bold mb-0 text-danger" id="metricFallidos">0%</h2>
+                                <small class="text-muted" style="font-size: 0.75rem;">Rechazados / DLQ</small>
                             </div>
                         </div>
                     </div>
 
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <div class="card p-4 border-0 shadow-sm">
-                                <h5 class="fw-bold mb-3"><i class="fa-solid fa-server me-2"></i>Estado de Nodos (Tolerancia a Fallos)</h5>
+                            <div class="card-modern p-4">
+                                <h5 class="fw-bold mb-3"><i class="fa-solid fa-server me-2 text-primary"></i>Estado de Nodos (Tolerancia a Fallos)</h5>
                                 <div class="d-flex justify-content-between align-items-center mb-2">
                                     <span><span id="dot1" class="status-dot dot-green"></span> Sede 1: Sincelejo (Puerto 5433)</span>
                                     <button class="btn btn-outline-danger btn-sm" onclick="toggleSede(1)">Conmutar Caída</button>
@@ -2049,8 +2247,8 @@ async def serve_ui():
                             </div>
                         </div>
                         <div class="col-md-6">
-                            <div class="card p-4 border-0 shadow-sm">
-                                <h5 class="fw-bold mb-3"><i class="fa-solid fa-shield-halved me-2"></i>Verificador de Integridad Criptográfica</h5>
+                            <div class="card-modern p-4">
+                                <h5 class="fw-bold mb-3"><i class="fa-solid fa-shield-halved me-2 text-primary"></i>Verificador de Integridad Criptográfica</h5>
                                 <div id="auditStatusBox" class="alert alert-success py-2 mb-3">
                                     <i class="fa-solid fa-circle-check me-1"></i> Cadena Íntegra verificada (SHA-256).
                                 </div>
@@ -2080,7 +2278,7 @@ async def serve_ui():
                         </div>
 
                         <!-- 1. APARTADO INDEPENDIENTE: BÚSQUEDA Y DETECCIÓN EN SEDES -->
-                        <div class="card mb-4 border-0 shadow-sm" style="border-left: 5px solid #0d6efd !important;">
+                        <div class="card-modern mb-4 p-2" style="border-left: 5px solid #2563eb !important;">
                             <div class="card-body p-4">
                                 <div class="d-flex justify-content-between align-items-center mb-2">
                                     <h5 class="fw-bold text-primary mb-0">
@@ -2121,7 +2319,7 @@ async def serve_ui():
                         </div>
 
                         <!-- 2. APARTADO INDEPENDIENTE: REGISTRO DE ADMISIÓN Y ASIGNACIÓN DE CONSULTA -->
-                        <div class="card border-0 shadow-sm" id="cardFormularioAdmision">
+                        <div class="card-modern p-2" id="cardFormularioAdmision">
                             <div class="card-body p-4">
                                 <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom">
                                     <h5 class="fw-bold text-secondary mb-0">
