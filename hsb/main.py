@@ -1221,15 +1221,11 @@ async def get_audit_events():
 async def verify_audit_chain():
     """
     Verifica la cadena de hashes SHA-256 de punta a punta.
-    Une los eventos de las 3 sedes, los ordena por id_evento, quita duplicados
-    y verifica la integridad criptográfica continua (TAREA 4).
+    Une los eventos de las 3 sedes, los ordena criptográficamente, quita duplicados
+    y verifica la integridad continua (TAREA 4).
     """
     db_events = load_audit_events_from_db()
-    if db_events:
-        mem_by_id = {e["id_evento"]: e for e in audit_ledger.events}
-        for dbe in db_events:
-            mem_by_id[dbe["id_evento"]] = dbe
-        audit_ledger.events = sorted(mem_by_id.values(), key=lambda x: x["id_evento"])
+    audit_ledger.unify_and_order_events(db_events)
     return audit_ledger.verify_integrity()
 
 @app.post("/audit/reset")
