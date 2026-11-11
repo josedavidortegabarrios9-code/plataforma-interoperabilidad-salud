@@ -84,7 +84,10 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - red_salud
+      red_salud:
+        aliases:
+          - hapifhir
+          - hapi-fhir
 
   # Health Service Bus (HSB) + API Gateway + 4 Vistas
   hsb_service:
@@ -98,7 +101,7 @@ services:
       SEDE1_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@pg_sede1:5432/historia_clinica_sede1
       SEDE2_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@pg_sede2:5432/historia_clinica_sede2
       SEDE3_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@pg_sede3:5432/historia_clinica_sede3
-      HAPI_FHIR_URL: http://hapi_fhir:8080/fhir
+      HAPI_FHIR_URL: http://hapifhir:8080/fhir
       JWT_SECRET: ${JWT_SECRET:-super_secret_clinical_interoperability_key_2026}
       HSB_API_KEY: ${HSB_API_KEY:-hsb_clinical_ingest_key_2026}
       MEDICO_PASSWORD: ${MEDICO_PASSWORD:-medico123}

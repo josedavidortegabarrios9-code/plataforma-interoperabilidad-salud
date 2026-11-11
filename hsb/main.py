@@ -188,6 +188,8 @@ async def check_hapi_alive() -> bool:
     # 1. Verificación HTTP activa
     urls_to_try = [
         HAPI_FHIR_URL.rstrip('/'),
+        "http://hapifhir:8080/fhir",
+        "http://hapi-fhir:8080/fhir",
         "http://127.0.0.1:8090/fhir",
         "http://localhost:8090/fhir",
         "http://127.0.0.1:8080/fhir",
@@ -198,7 +200,7 @@ async def check_hapi_alive() -> bool:
         for path in ["/metadata", ""]:
             try:
                 async with httpx.AsyncClient(timeout=1.5) as client:
-                    res = await client.get(f"{base_url}{path}")
+                    res = await client.get(f"{base_url}{path}", headers={"Host": "localhost:8080"})
                     if res.status_code in (200, 201, 400, 401):
                         return True
             except Exception:
@@ -238,6 +240,12 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
     ]
     endpoints_to_try = list(dict.fromkeys(candidate_urls))
 
+    fhir_headers = {
+        "Content-Type": "application/fhir+json",
+        "Accept": "application/fhir+json",
+        "Host": "localhost:8080"
+    }
+
     for attempt in range(1, max_retries + 1):
         for ep in endpoints_to_try:
             try:
@@ -246,7 +254,7 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
                     res = await client.post(
                         ep,
                         json=bundle,
-                        headers={"Content-Type": "application/fhir+json", "Accept": "application/fhir+json"}
+                        headers=fhir_headers
                     )
                     if res.status_code in (200, 201):
                         logger.info(f"[HAPI_FHIR] Bundle entregado exitosamente a {ep} (HTTP {res.status_code})")
@@ -265,7 +273,7 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
                             put_res = await client.put(
                                 put_url,
                                 json=res_obj,
-                                headers={"Content-Type": "application/fhir+json", "Accept": "application/fhir+json"}
+                                headers=fhir_headers
                             )
                             if put_res.status_code in (200, 201, 409):
                                 delivered_count += 1
