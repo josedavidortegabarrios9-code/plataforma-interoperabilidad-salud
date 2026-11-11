@@ -231,10 +231,9 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
         return True, "Entregado a HAPI FHIR (Test Mode)"
 
     candidate_urls = [
-        HAPI_FHIR_URL.rstrip('/'),
         "http://hapi_fhir:8080/fhir",
-        "http://127.0.0.1:8080/fhir",
-        "http://localhost:8080/fhir",
+        HAPI_FHIR_URL.rstrip('/'),
+        "http://hapifhir:8080/fhir",
         "http://127.0.0.1:8090/fhir",
         "http://localhost:8090/fhir"
     ]
@@ -283,6 +282,7 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
                         logger.info(f"[HAPI_FHIR] Recursos ({delivered_count}/{len(entries)}) entregados exitosamente a {ep} vía REST")
                         return True, "Entregado a HAPI FHIR"
             except Exception as e:
+                logger.warning(f"[HAPI_FHIR] Error al conectar con {ep}: {e}")
                 continue
 
     logger.error("[HAPI_FHIR] No se pudo entregar el Bundle tras %d intentos", max_retries)
