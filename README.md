@@ -125,10 +125,10 @@ La plataforma utiliza autenticación multifactor obligatoria en dos etapas:
 
 | Rol Asistencial | Identificador / Usuario | Autenticación Multifactor | Vista Asignada en Plataforma | Permisos Asistenciales |
 | :--- | :--- | :--- | :--- | :--- |
-| **Médico Especialista** | `medico_ruiz` | Contraseña (`.env`) + Código 2FA (`807286`) | Clínica Central | Consulta de historias unificadas de las 3 sedes y registro de diagnósticos CIE-10. |
-| **Admisionista / Triage** | `admision_sincelejo` | Contraseña (`.env`) + Código 2FA (`807286`) | Formulario Admisión | Admisión de pacientes y categorización de triage. **Bloqueo estricto a notas clínicas**. |
-| **Auditor de Calidad** | `auditor_calidad` | Contraseña (`.env`) + Código 2FA (`807286`) | Estado Nodos & Auditoría | Monitoreo de salud de nodos, simulación de caídas y verificación SHA-256. |
-| **Paciente** | `paciente1001` | Contraseña (`.env`) + Código 2FA (`807286`) | Portal Paciente | Resumen de sus atenciones y descarga de su Bundle FHIR R4 personal. |
+| **Médico Especialista** | `medico_ruiz` | Contraseña (`.env`) + Código 2FA (dinámico emitido a buzón) | Clínica Central | Consulta de historias unificadas de las 3 sedes y registro de diagnósticos CIE-10. |
+| **Admisionista / Triage** | `admision_sincelejo` | Contraseña (`.env`) + Código 2FA (dinámico emitido a buzón) | Formulario Admisión | Admisión de pacientes y categorización de triage. **Bloqueo estricto a notas clínicas**. |
+| **Auditor de Calidad** | `auditor_calidad` | Contraseña (`.env`) + Código 2FA (dinámico emitido a buzón) | Estado Nodos & Auditoría | Monitoreo de salud de nodos, simulación de caídas y verificación SHA-256. |
+| **Paciente** | `paciente1001` | Contraseña (`.env`) + Código 2FA (dinámico emitido a buzón) | Portal Paciente | Resumen de sus atenciones y descarga de su Bundle FHIR R4 personal. |
 
 ---
 

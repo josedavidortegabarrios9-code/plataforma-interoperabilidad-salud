@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 import httpx
 import asyncio
+import socket
 import logging
 import random
 
@@ -31,7 +32,7 @@ from hsb.audit import audit_ledger
 from hsb.database import (
     fetch_atenciones_sede, persist_atencion_sede, check_sede_alive,
     check_mensaje_bus, guardar_mensaje_bus, load_processed_messages_from_db,
-    load_audit_events_from_db
+    load_audit_events_from_db, load_unprocessed_queues_from_db
 )
 from hsb.auth import (
     JWTManager, require_role, USUARIOS_PRUEBA, ACTIVE_2FA_CODES,
@@ -158,23 +159,23 @@ init_seed_data()
 
 
 
-# Recuperar estado persistente desde PostgreSQL (idempotencia y auditoría tras reinicios)
-
+# Recuperar estado persistente desde PostgreSQL (idempotencia, auditoría y colas pendientes tras reinicios)
 try:
-
     db_msgs = load_processed_messages_from_db()
-
     processed_messages.update(db_msgs)
 
     db_audits = load_audit_events_from_db()
-
     if db_audits:
-
         audit_ledger.load_from_db(db_audits)
 
-except Exception:
-
-    pass
+    db_retries, db_dlq = load_unprocessed_queues_from_db()
+    for s_id in (1, 2, 3):
+        if db_retries.get(s_id):
+            sede_retry_queue[s_id].extend(db_retries[s_id])
+    if db_dlq:
+        dead_letter_queue.extend(db_dlq)
+except Exception as e:
+    logger.warning(f"Error recuperando estado persistente: {e}")
 
 
 async def check_hapi_alive() -> bool:
@@ -249,6 +250,7 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
                     if res.status_code in (200, 201):
                         logger.info(f"[HAPI_FHIR] Bundle entregado exitosamente a {ep} (HTTP {res.status_code})")
                         return True, "Entregado a HAPI FHIR"
+                    logger.warning(f"HAPI respondió {res.status_code}: {res.text[:300]}")
 
                     # 2. Entrega de recursos individuales (REST PUT)
                     entries = bundle.get("entry", [])
@@ -272,9 +274,8 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
             except Exception as e:
                 continue
 
-    # Si HAPI FHIR está en línea pero los endpoints tienen variaciones de esquema
-    logger.info("[HAPI_FHIR] Entrega confirmada con persistencia clínica")
-    return True, "Entregado a HAPI FHIR"
+    logger.error("[HAPI_FHIR] No se pudo entregar el Bundle tras %d intentos", max_retries)
+    return False, "HAPI FHIR no disponible o rechazó el Bundle"
 
 # --------------------------------------------------------------------------
 
@@ -344,6 +345,21 @@ async def flush_hapi_dlq() -> int:
             no_entregados.append(item)
     dead_letter_queue.extend(no_entregados)
     return reprocesados
+
+async def _worker_reintentos():
+    while True:
+        try:
+            for sede in (1, 2, 3):
+                if sede_retry_queue.get(sede):
+                    await asyncio.to_thread(flush_sede_retry_queue, sede)
+            await flush_hapi_dlq()
+        except Exception as e:
+            logger.error(f"worker reintentos: {e}")
+        await asyncio.sleep(5)
+
+@app.on_event("startup")
+async def _arrancar_worker():
+    asyncio.create_task(_worker_reintentos())
 
 # Puertas de Ingesta (RF1, RF2, RF3)
 # --------------------------------------------------------------------------
@@ -811,7 +827,7 @@ async def login(credentials: Dict[str, Any]):
 @app.post("/auth/verify-2fa")
 async def verify_2fa(payload: Dict[str, str]):
     """
-    Paso 2 del Login: Valida el código 2FA dinámico o el código de respaldo oficial (807286)
+    Paso 2 del Login: Valida el código 2FA dinámico emitido al correo
     y entrega el Token JWT firmado.
     """
     username = payload.get("username", "").strip()
@@ -1194,8 +1210,15 @@ async def get_audit_events():
 async def verify_audit_chain():
     """
     Verifica la cadena de hashes SHA-256 de punta a punta.
-    Detecta si alguna fila de auditoría fue alterada.
+    Une los eventos de las 3 sedes, los ordena por id_evento, quita duplicados
+    y verifica la integridad criptográfica continua (TAREA 4).
     """
+    db_events = load_audit_events_from_db()
+    if db_events:
+        mem_by_id = {e["id_evento"]: e for e in audit_ledger.events}
+        for dbe in db_events:
+            mem_by_id[dbe["id_evento"]] = dbe
+        audit_ledger.events = sorted(mem_by_id.values(), key=lambda x: x["id_evento"])
     return audit_ledger.verify_integrity()
 
 @app.post("/audit/reset")

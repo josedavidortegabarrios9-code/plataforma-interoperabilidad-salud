@@ -23,7 +23,7 @@ class TestHSBIntegration(unittest.TestCase):
         filepath = os.path.join(self.fixtures_dir, "01_adt_a01_valido_sede2.hl7")
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
-        res = client.post("/hsb/hl7", content=content, headers={"Content-Type": "text/plain"})
+        res = client.post("/hsb/hl7", content=content, headers={"Content-Type": "text/plain", "X-Rol": "medico", "X-API-Key": "hsb_clinical_ingest_key_2026"})
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data["estado"], "entregado")
@@ -35,7 +35,7 @@ class TestHSBIntegration(unittest.TestCase):
         filepath = os.path.join(self.fixtures_dir, "01_adt_a01_valido_sede2.hl7")
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
-        res = client.post("/hsb/hl7", content=content, headers={"Content-Type": "text/plain"})
+        res = client.post("/hsb/hl7", content=content, headers={"Content-Type": "text/plain", "X-Rol": "medico", "X-API-Key": "hsb_clinical_ingest_key_2026"})
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data["estado"], "duplicado")
@@ -45,7 +45,7 @@ class TestHSBIntegration(unittest.TestCase):
         filepath = os.path.join(self.fixtures_dir, "02_oru_r01_laboratorio_sede1.hl7")
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
-        res = client.post("/hsb/hl7", content=content, headers={"Content-Type": "text/plain"})
+        res = client.post("/hsb/hl7", content=content, headers={"Content-Type": "text/plain", "X-Rol": "medico", "X-API-Key": "hsb_clinical_ingest_key_2026"})
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data["estado"], "entregado")
@@ -56,7 +56,7 @@ class TestHSBIntegration(unittest.TestCase):
         filepath = os.path.join(self.fixtures_dir, "03_adt_a01_invalido.hl7")
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
-        res = client.post("/hsb/hl7", content=content, headers={"Content-Type": "text/plain"})
+        res = client.post("/hsb/hl7", content=content, headers={"Content-Type": "text/plain", "X-Rol": "medico", "X-API-Key": "hsb_clinical_ingest_key_2026"})
         self.assertEqual(res.status_code, 422)
         data = res.json()
         self.assertEqual(data["estado"], "rechazado")
@@ -69,7 +69,7 @@ class TestHSBIntegration(unittest.TestCase):
         filepath = os.path.join(self.fixtures_dir, "04_sede3_legado.csv")
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
-        res = client.post("/hsb/csv?sede=3", content=content, headers={"Content-Type": "text/plain"})
+        res = client.post("/hsb/csv?sede=3", content=content, headers={"Content-Type": "text/plain", "X-Rol": "medico", "X-API-Key": "hsb_clinical_ingest_key_2026"})
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data["entregados"], 3)

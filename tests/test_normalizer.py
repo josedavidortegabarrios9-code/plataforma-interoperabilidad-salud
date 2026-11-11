@@ -33,7 +33,7 @@ class TestFHIRNormalizer(unittest.TestCase):
         )
         self.assertEqual(enc["resourceType"], "Encounter")
         self.assertEqual(enc["id"], "enc-S2-0101")
-        self.assertEqual(enc["class"]["code"], "EMER")
+        self.assertEqual(enc["class"]["code"], "AMB")
         self.assertEqual(enc["subject"]["reference"], "Patient/pac-1007")
 
     def test_03_build_condition_cie10(self):

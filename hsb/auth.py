@@ -14,8 +14,18 @@ import secrets
 from typing import Dict, Any, Optional
 from fastapi import HTTPException, Header
 
-JWT_SECRET = os.getenv("JWT_SECRET", "super_secret_clinical_interoperability_key_2026")
-HSB_API_KEY = os.getenv("HSB_API_KEY", "hsb_clinical_ingest_key_2026")
+# Cargar variables de entorno estrictamente desde el archivo .env si existe en la raíz
+env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.env'))
+if os.path.exists(env_path):
+    with open(env_path, "r", encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+
+JWT_SECRET = os.getenv("JWT_SECRET")
+HSB_API_KEY = os.getenv("HSB_API_KEY")
 
 def hash_password(password: str, salt: Optional[str] = None) -> str:
     """
@@ -165,10 +175,15 @@ class JWTManager:
             "exp": int(time.time()) + expires_in_seconds
         }
 
+        secret = JWT_SECRET or os.getenv("JWT_SECRET")
+        if not secret:
+            raise HTTPException(status_code=500, detail="JWT_SECRET no configurado en variables de entorno (.env)")
+        secret_bytes = secret.encode('utf-8')
+
         header_b64 = cls._b64_encode(json.dumps(header).encode('utf-8'))
         payload_b64 = cls._b64_encode(json.dumps(payload).encode('utf-8'))
         signature_raw = f"{header_b64}.{payload_b64}".encode('utf-8')
-        signature = hmac.new(JWT_SECRET.encode('utf-8'), signature_raw, hashlib.sha256).digest()
+        signature = hmac.new(secret_bytes, signature_raw, hashlib.sha256).digest()
         sig_b64 = cls._b64_encode(signature)
 
         return f"{header_b64}.{payload_b64}.{sig_b64}"
@@ -179,8 +194,13 @@ class JWTManager:
         if len(parts) != 3:
             raise HTTPException(status_code=401, detail="Token JWT con formato inválido")
 
+        secret = JWT_SECRET or os.getenv("JWT_SECRET")
+        if not secret:
+            raise HTTPException(status_code=500, detail="JWT_SECRET no configurado en variables de entorno (.env)")
+        secret_bytes = secret.encode('utf-8')
+
         header_b64, payload_b64, sig_b64 = parts
-        expected_sig = hmac.new(JWT_SECRET.encode('utf-8'), f"{header_b64}.{payload_b64}".encode('utf-8'), hashlib.sha256).digest()
+        expected_sig = hmac.new(secret_bytes, f"{header_b64}.{payload_b64}".encode('utf-8'), hashlib.sha256).digest()
         actual_sig = cls._b64_decode(sig_b64)
 
         if not hmac.compare_digest(expected_sig, actual_sig):
@@ -232,7 +252,8 @@ def verify_hsb_ingest_auth(
       3. X-Rol para llamadas internas autorizadas
     """
     # 1. API-Key del sistema HIS de sede
-    if x_api_key and hmac.compare_digest(x_api_key, HSB_API_KEY):
+    configured_api_key = HSB_API_KEY or os.getenv("HSB_API_KEY")
+    if x_api_key and configured_api_key and hmac.compare_digest(x_api_key, configured_api_key):
         return {"sub": "sistema_his", "rol": "servicio"}
 
     # 2. Token JWT válido

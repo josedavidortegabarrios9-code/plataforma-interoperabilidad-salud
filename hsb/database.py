@@ -465,11 +465,12 @@ def load_processed_messages_from_db() -> Dict[str, Any]:
 # --------------------------------------------------------------------------
 def persist_audit_event_to_db(event: Dict[str, Any]) -> bool:
     """
-    Guarda un eslabón de la auditoría en la tabla evento_auditoria de PostgreSQL.
+    Guarda un eslabón de la auditoría en la tabla evento_auditoria de PostgreSQL en todas las sedes disponibles.
     """
     if not PSYCOPG2_AVAILABLE:
         return False
 
+    persisted_any = False
     for s_id in (1, 2, 3):
         conn = get_db_connection(s_id)
         if not conn:
@@ -494,23 +495,24 @@ def persist_audit_event_to_db(event: Dict[str, Any]) -> bool:
                 ))
                 conn.commit()
             conn.close()
-            return True
+            persisted_any = True
         except Exception as e:
             logger.error(f"Error persistiendo auditoría en PostgreSQL Sede {s_id}: {e}")
             try:
                 conn.close()
             except Exception:
                 pass
-    return False
+    return persisted_any
 
 def load_audit_events_from_db() -> List[Dict[str, Any]]:
     """
-    Recupera los eventos de auditoría almacenados en PostgreSQL al iniciar el HSB.
+    Recupera y unifica los eventos de auditoría almacenados en PostgreSQL de todas las sedes (1, 2 y 3).
+    Deduplica por id_evento y ordena por id_evento ascendente para garantizar integridad continua.
     """
     if not PSYCOPG2_AVAILABLE:
         return []
 
-    events = []
+    events_by_id: Dict[int, Dict[str, Any]] = {}
     for s_id in (1, 2, 3):
         conn = get_db_connection(s_id)
         if not conn:
@@ -524,11 +526,12 @@ def load_audit_events_from_db() -> List[Dict[str, Any]]:
                     ORDER BY id_evento ASC
                 """)
                 rows = cur.fetchall()
-                if rows:
-                    for r in rows:
+                for r in rows:
+                    ev_id = r["id_evento"]
+                    if ev_id not in events_by_id:
                         fh = r["fecha_hora"].isoformat() if hasattr(r["fecha_hora"], "isoformat") else str(r["fecha_hora"])
-                        events.append({
-                            "id_evento": r["id_evento"],
+                        events_by_id[ev_id] = {
+                            "id_evento": ev_id,
                             "timestamp": fh,
                             "fecha_hora": fh,
                             "actor": r["actor_username"],
@@ -541,13 +544,82 @@ def load_audit_events_from_db() -> List[Dict[str, Any]]:
                             "resultado": r["resultado"],
                             "hash_previo": r["hash_previo"],
                             "hash_actual": r["hash_actual"]
-                        })
-                    conn.close()
-                    return events
+                        }
             conn.close()
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error cargando auditoría de Sede {s_id}: {e}")
             try:
                 conn.close()
             except Exception:
                 pass
-    return events
+
+    return sorted(events_by_id.values(), key=lambda x: x["id_evento"])
+
+def load_unprocessed_queues_from_db() -> Tuple[Dict[int, List[Dict[str, Any]]], List[Dict[str, Any]]]:
+    """
+    Carga mensajes pendientes con estado 'reintentando' y 'MUERTO_DLQ' desde mensaje_bus en PostgreSQL
+    para que las colas Store-and-Forward y DLQ no se pierdan al reiniciar el HSB (TAREA 3).
+    """
+    if not PSYCOPG2_AVAILABLE:
+        return {1: [], 2: [], 3: []}, []
+
+    sede_retries: Dict[int, List[Dict[str, Any]]] = {1: [], 2: [], 3: []}
+    dlq_items: List[Dict[str, Any]] = []
+
+    for s_id in (1, 2, 3):
+        conn = get_db_connection(s_id)
+        if not conn:
+            continue
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id_mensaje, formato_origen, id_sede_origen, hash_contenido, 
+                           estado, intentos, fecha_ingreso, payload_raw, payload_fhir
+                    FROM mensaje_bus
+                    WHERE estado IN ('reintentando', 'MUERTO_DLQ')
+                """)
+                rows = cur.fetchall()
+                for r in rows:
+                    est = r["estado"]
+                    p_raw = r["payload_raw"] or ""
+                    p_fhir = r["payload_fhir"]
+                    if isinstance(p_fhir, str):
+                        try:
+                            p_fhir = json.loads(p_fhir)
+                        except Exception:
+                            pass
+
+                    s_target = r["id_sede_origen"] or s_id
+                    if est == "reintentando":
+                        from hsb.parser import HL7Parser
+                        parsed_data, _ = HL7Parser.validate_and_extract_hl7(p_raw) if r["formato_origen"] == "HL7 v2" else ({}, [])
+                        doc = parsed_data.get("documento", "0000") if parsed_data else "0000"
+                        sede_retries[s_target].append({
+                            "tipo": r["formato_origen"],
+                            "id_mensaje": r["id_mensaje"],
+                            "raw_body": p_raw,
+                            "data": parsed_data or {},
+                            "doc": doc,
+                            "bundle": p_fhir,
+                            "timestamp": time.time(),
+                            "payload_hash": r["hash_contenido"]
+                        })
+                    elif est == "MUERTO_DLQ":
+                        dlq_items.append({
+                            "id_mensaje": r["id_mensaje"],
+                            "fecha": r["fecha_ingreso"].isoformat() if hasattr(r["fecha_ingreso"], "isoformat") else str(r["fecha_ingreso"]),
+                            "formato": r["formato_origen"],
+                            "sede": s_target,
+                            "payload_raw": p_raw,
+                            "bundle": p_fhir,
+                            "motivo_muerte": "Persistido en base de datos como DLQ"
+                        })
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error cargando colas pendientes desde Sede {s_id}: {e}")
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    return sede_retries, dlq_items
