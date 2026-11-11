@@ -20,7 +20,7 @@ class FHIRNormalizer:
         if isinstance(date_val, datetime):
             return date_val.strftime("%Y-%m-%d")
         d_str = str(date_val).strip()
-        if len(d_str) == 8 and d_str.isdigit():  # YYYYMMDD
+        if len(d_str) >= 8 and d_str[:8].isdigit():  # YYYYMMDD o YYYYMMDDHHMMSS
             return f"{d_str[0:4]}-{d_str[4:6]}-{d_str[6:8]}"
         if "T" in d_str:
             return d_str.split("T")[0]

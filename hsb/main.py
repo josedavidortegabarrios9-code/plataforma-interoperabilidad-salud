@@ -229,11 +229,12 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
         return True, "Entregado a HAPI FHIR (Test Mode)"
 
     candidate_urls = [
+        HAPI_FHIR_URL.rstrip('/'),
+        "http://hapi_fhir:8080/fhir",
         "http://127.0.0.1:8080/fhir",
         "http://localhost:8080/fhir",
         "http://127.0.0.1:8090/fhir",
-        "http://localhost:8090/fhir",
-        HAPI_FHIR_URL.rstrip('/')
+        "http://localhost:8090/fhir"
     ]
     endpoints_to_try = list(dict.fromkeys(candidate_urls))
 
@@ -266,8 +267,10 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
                                 json=res_obj,
                                 headers={"Content-Type": "application/fhir+json", "Accept": "application/fhir+json"}
                             )
-                            if put_res.status_code in (200, 201):
+                            if put_res.status_code in (200, 201, 409):
                                 delivered_count += 1
+                            else:
+                                logger.warning(f"PUT {put_url} respondió {put_res.status_code}: {put_res.text[:200]}")
                     if delivered_count > 0:
                         logger.info(f"[HAPI_FHIR] Recursos ({delivered_count}/{len(entries)}) entregados exitosamente a {ep} vía REST")
                         return True, "Entregado a HAPI FHIR"
