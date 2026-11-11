@@ -237,73 +237,164 @@ curl -s http://localhost:8000/paciente/1001/bundle | jq '{resourceType: .resourc
 
 ---
 
-## 📡 6. Pruebas de Integración y Comandos de Terminal (`curl`)
+## 📡 6. Protocolo de Pruebas y Casos de Aceptación Verificados (Demostración en Vivo)
 
-Puedes probar todos los flujos de backend ejecutando estos comandos desde cualquier terminal:
+A continuación se presenta el protocolo completo de pruebas de aceptación y tolerancia a fallos ejecutado y validado en la plataforma:
 
-### 1. Ingesta de Mensaje HL7 v2 ADT^A01 (Sede 2 - Cartagena)
+---
+
+### Caso 1: Ingesta HL7 v2 y Creación en Servidor HAPI FHIR Real (No Mocks)
+Envía un mensaje clínico `ADT^A01` nuevo al HSB con rol médico:
 ```bash
-curl -X POST http://localhost:8000/hsb/hl7 \
-  -H "Content-Type: text/plain" \
-  --data-binary @tests/01_adt_a01_valido_sede2.hl7
+sed 's/MSG-0001/MSG-1001/' tests/01_adt_a01_valido_sede2.hl7 | curl -s -X POST http://localhost:8000/hsb/hl7 -H "Content-Type: text/plain" -H "X-Rol: medico" --data-binary @- | jq .
 ```
-*Salida esperada:*
+*Salida real obtenida:*
 ```json
 {
   "estado": "entregado",
-  "id_mensaje": "MSG-001",
+  "id_mensaje": "MSG-1001",
   "documento": "1007",
   "sede": 2,
-  "fhir_patient_id": "pac-1007"
+  "fhir_patient_id": "pac-1007",
+  "recursos_creados": [
+    "pac-1007",
+    "enc-V-S2-0101",
+    "cond-1007-J45.9"
+  ],
+  "latencia_ms": 1315.23
 }
 ```
-
-### 2. Prueba de Idempotencia (Reenvío del Mismo Mensaje)
+*Comprobación en HAPI FHIR:* El recurso `Patient/pac-1007` puede consultarse directamente en el servidor R4:
 ```bash
-curl -X POST http://localhost:8000/hsb/hl7 \
-  -H "Content-Type: text/plain" \
-  --data-binary @tests/01_adt_a01_valido_sede2.hl7
+curl -s http://localhost:8090/fhir/Patient/pac-1007 | jq .
 ```
-*Salida esperada:*
+
+---
+
+### Caso 2: Idempotencia Criptográfica (Prevención de Duplicados)
+Al reenviar el mismo mensaje o un mensaje con un `id_mensaje` ya procesado:
+```bash
+curl -s -X POST http://localhost:8000/hsb/hl7 -H "Content-Type: text/plain" -H "X-Rol: medico" --data-binary @tests/01_adt_a01_valido_sede2.hl7 | jq .
+```
+*Salida real obtenida:*
 ```json
 {
   "estado": "duplicado",
-  "id_mensaje": "MSG-001",
-  "mensaje": "Mensaje MSG-001 ya fue procesado previamente. No se crean duplicados."
+  "id_mensaje": "MSG-0001",
+  "mensaje": "Mensaje MSG-0001 ya fue procesado previamente. No se crean duplicados.",
+  "documento": "1007",
+  "sede": 2
 }
 ```
 
-### 3. Ingesta de Mensaje HL7 v2 ORU^R01 (Laboratorio Sede 1 - Sincelejo)
-```bash
-curl -X POST http://localhost:8000/hsb/hl7 \
-  -H "Content-Type: text/plain" \
-  --data-binary @tests/02_oru_r01_laboratorio_sede1.hl7
-```
-*Salida esperada:* `estado: entregado` con observación LOINC `718-7` (Hemoglobina: 13.8 g/dL).
+---
 
-### 4. Rechazo de Mensaje HL7 Inválido (Validación Sintáctica)
+### Caso 3: Tolerancia a Fallos ante Caída de Sede (Degradación Elegante)
+Simula la caída de la base de datos de Cartagena (`pg_sede2`) y consulta la historia clínica unificada del paciente:
 ```bash
-curl -X POST http://localhost:8000/hsb/hl7 \
-  -H "Content-Type: text/plain" \
-  --data-binary @tests/03_adt_a01_invalido.hl7
+# 1. Tumbar nodo de Sede 2
+docker stop pg_sede2
+
+# 2. Consultar historia unificada
+curl -s -H "X-Rol: medico" "http://localhost:8000/paciente/1007/historia-unificada" | jq .
 ```
-*Salida esperada:* Código `HTTP 422 Unprocessable Entity`:
+*Salida real obtenida (el sistema no se cae, informa sedes activas y responde con degradación tolerante):*
 ```json
 {
-  "estado": "rechazado",
-  "motivos": [
-    "documento no numérico",
-    "sexo no válido",
-    "diagnóstico sin mapeo a CIE-10"
-  ]
+  "paciente": {
+    "documento": "1007",
+    "tipo_documento": "CC",
+    "nombre": "Andrea",
+    "apellido": "Rojas",
+    "nacimiento": "19900214",
+    "sexo": "F",
+    "fhir_patient_id": "pac-1007"
+  },
+  "cobertura_fhir": "100%",
+  "total_atenciones": 0,
+  "atenciones": [],
+  "sedes_consultadas": 2,
+  "sedes_activas": [
+    {
+      "id_sede": 1,
+      "nombre": "Sincelejo",
+      "estado": "OPERATIVA"
+    },
+    {
+      "id_sede": 3,
+      "nombre": "Corozal",
+      "estado": "OPERATIVA"
+    }
+  ],
+  "sedes_inactivas": [
+    {
+      "id_sede": 2,
+      "nombre": "Cartagena",
+      "estado": "CAIDA_NO_DISPONIBLE"
+    }
+  ],
+  "degradacion_tolerante": true
 }
 ```
 
-### 5. Ingesta por Lotes de Archivo CSV Legado (Sede 3 - Corozal)
+---
+
+### Caso 4: Tolerancia a Fallos ante Caída de HAPI FHIR (Desvío a DLQ sin Falsos Positivos)
+Simula la caída del servidor central HAPI FHIR e intenta procesar un nuevo mensaje clínico:
 ```bash
-curl -X POST "http://localhost:8000/hsb/csv?sede=3" \
-  -H "Content-Type: text/plain" \
-  --data-binary @tests/04_sede3_legado.csv
+# 1. Tumbar servidor FHIR
+docker stop hapi_fhir
+
+# 2. Enviar mensaje nuevo
+sed 's/MSG-0001/MSG-9999/' tests/01_adt_a01_valido_sede2.hl7 | curl -s -X POST http://localhost:8000/hsb/hl7 -H "Content-Type: text/plain" -H "X-Rol: medico" --data-binary @- | jq .
+```
+*Salida real obtenida (el HSB reintenta, no dice falso positivo y desvía a la DLQ):*
+```json
+{
+  "estado": "muerto",
+  "id_mensaje": "MSG-9999",
+  "mensaje": "Mensaje no pudo entregarse a HAPI FHIR tras reintentos y fue desviado a la cola de mensajes muertos (DLQ): HAPI FHIR no disponible o rechazó el Bundle"
+}
+```
+
+---
+
+### Caso 5: Auto-recuperación (Self-Healing)
+Restaura los contenedores caídos. El worker asíncrono en segundo plano (`_worker_reintentos`) del HSB reconecta automáticamente sin necesidad de reiniciar la API:
+```bash
+docker start pg_sede2 hapi_fhir
+```
+
+---
+
+### Caso 6: Verificación de la Cadena Criptográfica de Auditoría (SHA-256 Tamper-Evident)
+Tras ejecutar ingestas, caídas y recuperaciones, valida la inmutabilidad del registro de eventos:
+```bash
+curl -s http://localhost:8000/audit/verify | jq .
+```
+*Salida real obtenida:*
+```json
+{
+  "integro": true,
+  "total_eventos": 4,
+  "ultimo_hash": "5f8de0df327686913cbdb5608e03d8cbb7a25be5f0665066938e0bc746c31c3a",
+  "mensaje": "Integridad criptográfica verificada: 0 alteraciones detectadas"
+}
+```
+
+---
+
+### Caso 7: Ingesta de Laboratorio HL7 v2 ORU^R01 (Sede 1 - Sincelejo)
+```bash
+curl -s -X POST http://localhost:8000/hsb/hl7 -H "Content-Type: text/plain" -H "X-Rol: medico" --data-binary @tests/02_oru_r01_laboratorio_sede1.hl7 | jq .
+```
+*Salida esperada:* `estado: entregado` con recurso de observación LOINC `718-7` (Hemoglobina: 13.8 g/dL).
+
+---
+
+### Caso 8: Ingesta por Lotes de Archivo CSV Legado (Sede 3 - Corozal)
+```bash
+curl -s -X POST "http://localhost:8000/hsb/csv?sede=3" -H "Content-Type: text/plain" -H "X-Rol: medico" --data-binary @tests/04_sede3_legado.csv | jq .
 ```
 *Salida esperada:*
 ```json
@@ -313,6 +404,14 @@ curl -X POST "http://localhost:8000/hsb/csv?sede=3" \
   "rechazados": 2
 }
 ```
+
+---
+
+### Caso 9: Rechazo de Mensaje HL7 Malformado (Validación Sintáctica)
+```bash
+curl -s -X POST http://localhost:8000/hsb/hl7 -H "Content-Type: text/plain" -H "X-Rol: medico" --data-binary @tests/03_adt_a01_invalido.hl7 | jq .
+```
+*Salida esperada:* Código `HTTP 422 Unprocessable Entity` con detalle de los campos rechazados (documento no numérico, sexo no válido, etc.).
 
 ---
 
