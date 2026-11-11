@@ -252,6 +252,28 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
                         logger.info(f"[HAPI_FHIR] Bundle entregado exitosamente a {ep} (HTTP {res.status_code})")
                         return True, "Entregado a HAPI FHIR"
                     else:
+                        # Fallback a creación REST individual directa de recursos en HAPI FHIR
+                        entries = bundle.get("entry", [])
+                        if entries:
+                            all_ok = True
+                            for ent in entries:
+                                res_obj = ent.get("resource", {})
+                                r_type = res_obj.get("resourceType")
+                                r_id = res_obj.get("id")
+                                if r_type and r_id:
+                                    put_url = f"{ep}/{r_type}/{r_id}"
+                                    put_res = await client.put(
+                                        put_url,
+                                        json=res_obj,
+                                        headers={"Content-Type": "application/fhir+json", "Accept": "application/fhir+json"}
+                                    )
+                                    if put_res.status_code not in (200, 201):
+                                        all_ok = False
+                                        break
+                            if all_ok:
+                                logger.info(f"[HAPI_FHIR] Recursos ({len(entries)}) entregados exitosamente a {ep} vía REST")
+                                return True, "Entregado a HAPI FHIR"
+
                         err_snippet = res.text[:120].replace('\n', ' ')
                         last_err = f"HTTP {res.status_code} ({err_snippet})"
                         logger.warning(f"[HAPI_FHIR] Intento {attempt} a {ep} respondió: {last_err}")

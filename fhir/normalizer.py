@@ -184,14 +184,11 @@ class FHIRNormalizer:
         Esto garantiza idempotencia total en HAPI FHIR sin duplicación de registros.
         """
         entries = []
-        import uuid
         for res in resources:
             res_type = res["resourceType"]
             res_id = res["id"]
-            # En FHIR R4 transaction, urn:uuid DEBE ser un UUID v4 o v5 válido RFC 4122
-            clean_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{res_type}/{res_id}"))
             entries.append({
-                "fullUrl": f"urn:uuid:{clean_uuid}",
+                "fullUrl": f"{res_type}/{res_id}",
                 "resource": res,
                 "request": {
                     "method": "PUT",
