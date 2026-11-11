@@ -248,7 +248,7 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
     for attempt in range(1, max_retries + 1):
         for ep in endpoints_to_try:
             try:
-                async with httpx.AsyncClient(timeout=6.0) as client:
+                async with httpx.AsyncClient(timeout=35.0) as client:
                     # 1. Probar entrega vía Bundle
                     res = await client.post(
                         ep,
@@ -282,7 +282,7 @@ async def send_to_hapi_with_retry(bundle: Dict[str, Any], max_retries: int = 3) 
                         logger.info(f"[HAPI_FHIR] Recursos ({delivered_count}/{len(entries)}) entregados exitosamente a {ep} vía REST")
                         return True, "Entregado a HAPI FHIR"
             except Exception as e:
-                logger.warning(f"[HAPI_FHIR] Error al conectar con {ep}: {e}")
+                logger.warning(f"[HAPI_FHIR] Error al conectar con {ep}: {type(e).__name__} ({e})")
                 continue
 
     logger.error("[HAPI_FHIR] No se pudo entregar el Bundle tras %d intentos", max_retries)
