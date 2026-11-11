@@ -1170,8 +1170,8 @@ async def registrar_admision_clinica(data: Dict[str, Any]):
     }
     clinical_encounters.insert(0, nuevo_encuentro)
 
-    # 3. Persistir en PostgreSQL (RF4)
-    persist_atencion_sede(
+    # 3. Persistir en PostgreSQL de la sede (Store-and-Forward si el nodo está caído)
+    db_saved, _ = persist_atencion_sede(
         sede_id=sede,
         documento=pid,
         nombre=nombre,
@@ -1182,6 +1182,27 @@ async def registrar_admision_clinica(data: Dict[str, Any]):
         medico=medico,
         triage_cod=triage
     )
+    if not db_saved:
+        adm_hash = hashlib.sha256(f"ADM|{pid}|{enc_id}".encode()).hexdigest()
+        sede_retry_queue[sede].append({
+            "tipo": "ADMISIÓN",
+            "id_mensaje": enc_id,
+            "data": {
+                "nombre": nombre,
+                "apellido": apellido,
+                "fecha_nacimiento": nacimiento,
+                "sexo": genero,
+                "motivo": motivo,
+                "medico": medico,
+                "triage": triage,
+            },
+            "doc": pid,
+            "bundle": bundle,
+            "timestamp": time.time(),
+            "payload_hash": adm_hash
+        })
+        guardar_mensaje_bus(enc_id, "ADMISIÓN_WEB", sede, adm_hash, "reintentando", json.dumps(data), bundle)
+        audit_ledger.add_event("HSB_ROUTER", "ADMISIONISTA", "STORE_AND_FORWARD", f"ADM_{enc_id}", f"SEDE_{sede}_DOWN_ENCOLADO")
 
     # 4. Auditoría
     audit_ledger.add_event("ADMISIONISTA", "ADMISIONISTA", "ADMITIR_PACIENTE", f"Patient/pac-{pid}", f"ASIGNADO A {medico} (Triage {triage})")
