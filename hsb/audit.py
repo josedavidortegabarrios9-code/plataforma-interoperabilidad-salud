@@ -112,8 +112,8 @@ class AuditChain:
         """
         Recorre secuencialmente la cadena de hashes. Si algún registro fue modificado,
         detecta exactamente la posición del evento alterado (tamper detection).
+        Verifica SOLO la cadena in-memory de la sesión actual (no mezcla con DB).
         """
-        self.unify_and_order_events()
         if not self.events:
             return {"integro": True, "total_eventos": 0, "mensaje": "Cadena de auditoría vacía"}
 

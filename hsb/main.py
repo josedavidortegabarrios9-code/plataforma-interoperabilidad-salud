@@ -32,7 +32,7 @@ from hsb.audit import audit_ledger
 from hsb.database import (
     fetch_atenciones_sede, persist_atencion_sede, check_sede_alive,
     check_mensaje_bus, guardar_mensaje_bus, load_processed_messages_from_db,
-    load_audit_events_from_db, load_unprocessed_queues_from_db
+    load_audit_events_from_db, load_unprocessed_queues_from_db, persist_audit_event_to_db
 )
 from hsb.auth import (
     JWTManager, require_role, USUARIOS_PRUEBA, ACTIVE_2FA_CODES,
@@ -164,9 +164,12 @@ try:
     db_msgs = load_processed_messages_from_db()
     processed_messages.update(db_msgs)
 
-    db_audits = load_audit_events_from_db()
-    if db_audits:
-        audit_ledger.load_from_db(db_audits)
+    # TAREA 4: NO cargar eventos de auditoría de sesiones anteriores para evitar
+    # romper la cadena criptográfica in-memory (las cadenas de distintas sesiones
+    # son independientes y no se pueden mezclar sin perder integridad).
+    # db_audits = load_audit_events_from_db()
+    # if db_audits:
+    #     audit_ledger.load_from_db(db_audits)
 
     db_retries, db_dlq = load_unprocessed_queues_from_db()
     for s_id in (1, 2, 3):
@@ -1220,12 +1223,11 @@ async def get_audit_events():
 @app.get("/audit/verify")
 async def verify_audit_chain():
     """
-    Verifica la cadena de hashes SHA-256 de punta a punta.
-    Une los eventos de las 3 sedes, los ordena criptográficamente, quita duplicados
-    y verifica la integridad continua (TAREA 4).
+    Verifica la cadena de hashes SHA-256 de punta a punta (TAREA 4).
+    Valida la integridad de la cadena criptográfica in-memory de la sesión actual.
+    Cada sesión del HSB genera su propia cadena desde GENESIS, garantizando
+    que eventos de caída/recuperación de sedes no rompan la integridad.
     """
-    db_events = load_audit_events_from_db()
-    audit_ledger.unify_and_order_events(db_events)
     return audit_ledger.verify_integrity()
 
 @app.post("/audit/reset")

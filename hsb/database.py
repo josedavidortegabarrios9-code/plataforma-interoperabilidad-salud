@@ -481,7 +481,8 @@ def persist_audit_event_to_db(event: Dict[str, Any]) -> bool:
                     SELECT setval('evento_auditoria_id_evento_seq', COALESCE((SELECT MAX(id_evento) FROM evento_auditoria), 1));
                     INSERT INTO evento_auditoria (id_evento, fecha_hora, actor_username, rol_actor, accion, recurso_afectado, resultado, hash_previo, hash_actual)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id_evento) DO NOTHING;
+                    ON CONFLICT (id_evento) DO UPDATE 
+                    SET hash_previo = EXCLUDED.hash_previo, hash_actual = EXCLUDED.hash_actual;
                 """, (
                     event["id_evento"],
                     event["fecha_hora"],
