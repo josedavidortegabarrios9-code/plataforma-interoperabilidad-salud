@@ -102,32 +102,23 @@ class FHIRNormalizer:
             clase_code = "IMP"
             clase_display = "Inpatient"
 
-        return {
+        dt_clean = cls._format_datetime(fecha_ingreso)
+        enc_res = {
             "resourceType": "Encounter",
             "id": f"enc-{encounter_id}",
             "status": "finished",
             "class": {
                 "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
-                "code": clase_code,
-                "display": clase_display
+                "code": "AMB",
+                "display": "ambulatory"
             },
             "subject": {
                 "reference": patient_ref
-            },
-            "period": {
-                "start": cls._format_datetime(fecha_ingreso)
-            },
-            "participant": [
-                {
-                    "individual": {
-                        "display": medico
-                    }
-                }
-            ],
-            "serviceProvider": {
-                "display": f"Sede {sede}"
             }
         }
+        if dt_clean and len(dt_clean) >= 19:
+            enc_res["period"] = {"start": dt_clean}
+        return enc_res
 
     @classmethod
     def build_condition(cls, cond_id: str, doc: str, encounter_id: str, cod_cie10: str, desc_cie10: str, fecha: Any = None) -> Dict[str, Any]:
