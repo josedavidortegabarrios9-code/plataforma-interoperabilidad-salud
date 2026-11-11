@@ -1652,6 +1652,10 @@ async def serve_ui():
                 </div>
 
                 <div class="d-flex align-items-center gap-3">
+                    <button class="btn btn-sm btn-outline-primary d-flex align-items-center gap-2 shadow-sm py-1 px-3" onclick="recargarSeccionActual()" title="Actualizar los datos de la vista actual inmediatamente sin cerrar sesión">
+                        <i class="fa-solid fa-arrows-rotate" id="refreshIcon"></i>
+                        <span class="fw-semibold">Actualizar</span>
+                    </button>
                     <div class="d-flex align-items-center gap-2">
                         <i class="fa-solid fa-circle-user text-secondary fs-4"></i>
                         <span class="small fw-semibold text-secondary" id="navUserName">Dr. Mateo Ruiz</span>
@@ -1968,7 +1972,12 @@ async def serve_ui():
 
                 <!-- SECCIÓN 3: LISTAR PACIENTES FEDERADOS -->
                 <div id="secListarPacientes" class="d-none">
-                    <h3 class="fw-bold mb-3 text-secondary">Listado de Pacientes Federados</h3>
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h3 class="fw-bold mb-0 text-secondary">Listado de Pacientes Federados</h3>
+                        <button class="btn btn-sm btn-outline-primary" onclick="cargarListadoPacientes()">
+                            <i class="fa-solid fa-arrows-rotate me-1"></i> Actualizar Listado
+                        </button>
+                    </div>
                     <div class="card p-3 border-0 shadow-sm">
                         <div class="table-responsive">
                             <table class="table table-hover align-middle mb-0">
@@ -1985,7 +1994,12 @@ async def serve_ui():
 
                 <!-- SECCIÓN 4: DASHBOARD, RESILIENCIA & AUDITORÍA SHA-256 -->
                 <div id="secDashboard" class="d-none">
-                    <h3 class="fw-bold mb-3 text-secondary">Estado de la Plataforma & Auditoría Criptográfica</h3>
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h3 class="fw-bold mb-0 text-secondary">Estado de la Plataforma & Auditoría Criptográfica</h3>
+                        <button class="btn btn-sm btn-outline-primary" onclick="recargarSeccionActual()">
+                            <i class="fa-solid fa-arrows-rotate me-1"></i> Actualizar Métricas & Nodos
+                        </button>
+                    </div>
                     <div class="row g-3 mb-4">
                         <div class="col-md-3">
                             <div class="card p-3 text-center border-0 shadow-sm border-start border-primary border-4">
@@ -2423,7 +2437,10 @@ async def serve_ui():
             }
         }
 
+        let seccionActual = 'crear';
+
         function navegarSeccion(sec) {
+            seccionActual = sec;
             document.getElementById('secAdmisionPaciente').classList.add('d-none');
             document.getElementById('secCrearRegistro').classList.add('d-none');
             document.getElementById('secConsultarHistorial').classList.add('d-none');
@@ -2452,6 +2469,36 @@ async def serve_ui():
                 document.querySelector('#menuDashboard a').classList.add('active');
                 actualizarMetricas();
                 verificarAuditoria();
+                actualizarEstadoNodos();
+            }
+        }
+
+        async function recargarSeccionActual() {
+            const icon = document.getElementById('refreshIcon');
+            if (icon) icon.classList.add('fa-spin');
+            try {
+                if (seccionActual === 'crear') {
+                    await cargarPacientesAsignadosMedico();
+                } else if (seccionActual === 'listar') {
+                    await cargarListadoPacientes();
+                } else if (seccionActual === 'consultar') {
+                    await consultarHistoriaFederada();
+                } else if (seccionActual === 'dashboard') {
+                    await actualizarMetricas();
+                    await verificarAuditoria();
+                    await actualizarEstadoNodos();
+                } else if (seccionActual === 'admision') {
+                    const docInput = document.getElementById('busquedaAdmisionDoc');
+                    if (docInput && docInput.value.trim()) {
+                        await verificarYBuscarPacienteAdmision();
+                    }
+                }
+            } catch (e) {
+                console.error('Error al recargar vista actual:', e);
+            } finally {
+                setTimeout(() => {
+                    if (icon) icon.classList.remove('fa-spin');
+                }, 400);
             }
         }
 
@@ -2811,6 +2858,23 @@ RXA|0|1|202611081200|202611081200|${med}^${pos}`;
             document.getElementById('metricFallidos').innerText = data.tasa_fallidos_porcentaje + '%';
         }
 
+        async function actualizarEstadoNodos() {
+            try {
+                const res = await fetch('/health');
+                if (!res.ok) return;
+                const data = await res.json();
+                const comps = data.componentes || {};
+                const d1 = document.getElementById('dot1');
+                if (d1) d1.className = comps.nodo_sede1_sincelejo === 'UP' ? 'status-dot dot-green' : 'status-dot dot-red';
+                const d2 = document.getElementById('dot2');
+                if (d2) d2.className = comps.nodo_sede2_cartagena === 'UP' ? 'status-dot dot-green' : 'status-dot dot-red';
+                const d3 = document.getElementById('dot3');
+                if (d3) d3.className = comps.nodo_sede3_corozal === 'UP' ? 'status-dot dot-green' : 'status-dot dot-red';
+            } catch (e) {
+                console.error('Error al actualizar estado de nodos:', e);
+            }
+        }
+
         async function toggleSede(id) {
             const res = await fetch(`/test/toggle-sede?sede_id=${id}`, { method: 'POST' });
             const data = await res.json();
@@ -2866,10 +2930,12 @@ RXA|0|1|202611081200|202611081200|${med}^${pos}`;
         }
     
         // GESTIÓN DE PACIENTES ASIGNADOS AL MÉDICO (SALA DE ESPERA FILTRADA POR PROFESIONAL)
-        async function cargarPacientesAsignadosMedico() {
+        async function cargarPacientesAsignadosMedico(silencioso = false) {
             const container = document.getElementById('listaPacientesAsignados');
             if (!container) return;
-            container.innerHTML = '<span class="text-muted small"><i class="fa-solid fa-spinner fa-spin me-1"></i> Consultando sala de espera y pacientes asignados...</span>';
+            if (!silencioso) {
+                container.innerHTML = '<span class="text-muted small"><i class="fa-solid fa-spinner fa-spin me-1"></i> Consultando sala de espera y pacientes asignados...</span>';
+            }
             try {
                 const res = await fetch('/api/pacientes');
                 if (!res.ok) {
@@ -2958,10 +3024,12 @@ RXA|0|1|202611081200|202611081200|${med}^${pos}`;
         }
 
         // CARGA DEL LISTADO DE PACIENTES FEDERADOS
-        async function cargarListadoPacientes() {
+        async function cargarListadoPacientes(silencioso = false) {
             const tbody = document.getElementById('tablaListadoPacientesBody');
             if (!tbody) return;
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted small py-3"><i class="fa-solid fa-spinner fa-spin me-2"></i> Cargando pacientes federados en las 3 sedes...</td></tr>';
+            if (!silencioso) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted small py-3"><i class="fa-solid fa-spinner fa-spin me-2"></i> Cargando pacientes federados en las 3 sedes...</td></tr>';
+            }
             try {
                 const res = await fetch('/api/pacientes');
                 if (!res.ok) {
@@ -3131,6 +3199,22 @@ RXA|0|1|202611081200|202611081200|${med}^${pos}`;
                 tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger small py-2">Error cargando auditoría de accesos.</td></tr>';
             }
         }
+
+        // AUTO-ACTUALIZACIÓN PERIÓDICA EN SEGUNDO PLANO (CADA 5 SEGUNDOS)
+        // Permite que modificaciones desde otras sedes, terminal o formularios se reflejen en vivo sin salir
+        setInterval(() => {
+            if (!currentAuth) return; // Solo si el usuario ha iniciado sesión
+            
+            if (seccionActual === 'dashboard') {
+                actualizarMetricas();
+                verificarAuditoria();
+                actualizarEstadoNodos();
+            } else if (seccionActual === 'crear' && currentAuth.rol === 'medico') {
+                cargarPacientesAsignadosMedico(true);
+            } else if (seccionActual === 'listar') {
+                cargarListadoPacientes(true);
+            }
+        }, 5000);
 
     </script>
 </body>
