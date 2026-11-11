@@ -338,72 +338,183 @@ HTTP/1.1 403 Forbidden
 
 ---
 
-## 🔍 7. Verificación de Auditoría Criptográfica (SHA-256)
+## 🔍 8. Verificación de Auditoría Criptográfica (SHA-256)
 
 1. **Verificar cadena íntegra:**
 ```bash
-curl http://localhost:8000/audit/verify
+curl -s http://localhost:8000/audit/verify | jq .
 ```
-*Resultado:* `{"integro": true, "mensaje": "Integridad criptográfica verificada: 0 alteraciones detectadas"}`
+*Resultado:*
+```json
+{
+  "integro": true,
+  "total_eventos": 4,
+  "ultimo_hash": "...",
+  "mensaje": "Integridad criptográfica verificada: 0 alteraciones detectadas"
+}
+```
 
-2. **Simular alteración de registro:**
+2. **Simular alteración de registro (Tamper Detection):**
 ```bash
-curl -X POST "http://localhost:8000/audit/tamper?evento_id=1"
+curl -s -X POST "http://localhost:8000/audit/tamper?evento_id=1" | jq .
 ```
 
-3. **Comprobar detección:**
+3. **Comprobar detección inmediata de manipulación:**
 ```bash
-curl http://localhost:8000/audit/verify
+curl -s http://localhost:8000/audit/verify | jq .
 ```
-*Resultado:* `{"integro": false, "evento_alterado_id": 1, "motivo": "El hash SHA-256 del registro no coincide con el contenido de la fila"}`
+*Resultado:*
+```json
+{
+  "integro": false,
+  "evento_alterado_id": 1,
+  "indice": 0,
+  "motivo": "Contenido modificado en evento 1: el hash actual no coincide con los datos sellados"
+}
+```
 
 ---
 
 ## 🧪 9. Ejecución de la Suite de Pruebas Automatizadas
 
-La plataforma incluye 20 pruebas automáticas unitarias y de integración:
+La plataforma cuenta con **30 pruebas automáticas exhaustivas** divididas en pruebas sintácticas, semánticas, normalización FHIR R4, seguridad RBAC/2FA e integración del HSB:
 
 ```bash
-python3 -m unittest discover tests
+# Asegurarse de activar el entorno virtual
+source venv/bin/activate
+
+# Ejecutar los 30 tests unitarios y de integración
+python -m unittest discover -s tests -v
 ```
 
 *Salida esperada:*
 ```text
-....................
+test_01_hash_password_sha256 (test_auth.TestAuthSecurity.test_01_hash_password_sha256) ... ok
+test_02_verify_password_valido_e_invalido (test_auth.TestAuthSecurity.test_02_verify_password_valido_e_invalido) ... ok
+test_03_jwt_creacion_y_validacion (test_auth.TestAuthSecurity.test_03_jwt_creacion_y_validacion) ... ok
+...
+test_11_tolerancia_fallos_sede_caida_con_degradacion (test_hsb_integration.TestHSBIntegration.test_11_tolerancia_fallos_sede_caida_con_degradacion) ... ok
 ----------------------------------------------------------------------
-Ran 20 tests in 0.18s
+Ran 30 tests in 0.508s
 
 OK
 ```
 
 ---
 
-## 📁 9. Estructura del Proyecto
+## 🛠️ 10. Guía de Solución de Problemas y Errores Comunes (Troubleshooting)
+
+A continuación se detallan los incidentes más comunes al desplegar o probar la plataforma y su solución paso a paso:
+
+### 1. HAPI FHIR tarda en responder o retorna `503 Service Unavailable` / `Connection Refused`
+- **Causa:** El contenedor oficial `hapi_fhir` (basado en Java/Tomcat con Spring Boot y JPA) realiza migraciones iniciales de base de datos y levantamiento del metamodelo FHIR R4. En máquinas virtuales de desarrollo, este arranque suele tardar entre **2 y 4 minutos**.
+- **Diagnóstico:** Revisa el log de inicialización de HAPI:
+  ```bash
+  docker logs -f hapi_fhir
+  ```
+  Espera hasta que aparezca la línea:
+  `INFO ... Started ServerConnector@... {HTTP/1.1, (http/1.1)}{0.0.0.0:8080}`
+- **Solución:**
+  Verifica directamente el endpoint de metadatos hasta recibir `HTTP 200`:
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8090/fhir/metadata
+  ```
+  Una vez retorne `200`, el servidor está 100% operativo para recibir bundles.
+
+### 2. Error Tomcat `400 Bad Request` por violaciones de RFC 1123 en nombres de Host
+- **Causa:** En versiones recientes de Apache Tomcat/HAPI FHIR, los nombres de host internos de Docker que contienen guiones bajos (como `http://hapi_fhir:8080/fhir`) son rechazados con `HTTP 400` porque el RFC 1123 prohíbe guiones bajos en el encabezado HTTP `Host`.
+- **Solución integrada:**
+  El middleware HSB ya inyecta de forma transparente el encabezado estándar:
+  ```python
+  headers={"Host": "localhost:8080", "Content-Type": "application/fhir+json"}
+  ```
+  Además, `docker-compose.yml` expone los alias de red `hapifhir` y `hapi-fhir`.
+
+### 3. Los cambios en el código Python no se reflejan tras modificar archivos
+- **Causa:** Ejecutar `docker compose restart hsb_service` solo reinicia el proceso dentro del contenedor con la imagen compilada previamente; **no actualiza el código**.
+- **Solución obligatoria:**
+  Reconstruye la imagen del servicio con:
+  ```bash
+  docker compose up -d --build hsb_service
+  ```
+
+### 4. Conflicto de puertos en el Host (5431, 5432, 5433, 8000, 8090)
+- **Causa:** Existe una instancia local de PostgreSQL activa en tu máquina en el puerto `5432`, o un servidor web local ocupando el puerto `8000` o `8090`.
+- **Diagnóstico:**
+  ```bash
+  sudo ss -tulpn | grep -E ':(5431|5432|5433|8000|8090)'
+  ```
+- **Solución:**
+  - Si es PostgreSQL local: `sudo systemctl stop postgresql`
+  - Si necesitas mapear a puertos libres, crea tu archivo `.env` local (`cp .env.example .env`) y personaliza:
+    ```bash
+    SEDE2_PORT=5435
+    HSB_PORT=8001
+    HAPI_PORT=8095
+    ```
+
+### 5. Error de permisos de Docker en Linux (`permission denied while trying to connect to Docker daemon`)
+- **Causa:** Tu usuario de Ubuntu no pertenece al grupo `docker`.
+- **Solución:**
+  ```bash
+  sudo usermod -aG docker $USER
+  newgrp docker
+  ```
+
+### 6. Archivo de configuración `.env` no encontrado
+- **Causa:** Por lineamientos de seguridad OWASP y Git, `.env` está ignorado en `.gitignore`.
+- **Solución:**
+  ```bash
+  cp .env.example .env
+  ```
+  El HSB cuenta con resolución defensiva en cascada: si `.env` no está presente, lee `.env.example` y variables del sistema sin detener la ejecución.
+
+### 7. Reiniciar el entorno completamente limpio desde cero
+- **Causa:** Si deseas purgar todos los datos de pruebas previas, colas y transacciones para una sustentación limpia:
+- **Solución:**
+  ```bash
+  # 1. Apagar contenedores y eliminar volúmenes
+  docker compose down -v
+  
+  # 2. Levantar y compilar todo desde cero
+  docker compose up -d --build
+  
+  # 3. Esperar 1 minuto y verificar estado
+  docker compose ps
+  ```
+
+---
+
+## 📁 11. Estructura del Proyecto
 
 ```
 plataforma-interoperabilidad-salud/
 ├── db/                   # Esquemas SQL, catálogos y datos sintéticos de las 3 sedes
 │   ├── init_schema.sql   # Esquema relacional asistencial
 │   ├── catalogs.sql      # Catálogos oficiales (CIE-10, LOINC, Sexo, Tipo Doc)
-│   ├── seed_sede1.sql    # Datos Sede 1 (Sincelejo)
-│   ├── seed_sede2.sql    # Datos Sede 2 (Cartagena)
-│   └── seed_sede3.sql    # Datos Sede 3 (Corozal)
-├── docs/                 # Documentación técnica y especificaciones de diseño
+│   ├── seed_sede1.sql    # Datos Sede 1 (Sincelejo - Laboratorio)
+│   ├── seed_sede2.sql    # Datos Sede 2 (Cartagena - Urgencias)
+│   └── seed_sede3.sql    # Datos Sede 3 (Corozal - Consulta Externa)
+├── docs/                 # Documentación técnica, diagramas y especificaciones
 ├── fhir/                 # Especificación de recursos y normalizador HL7 FHIR R4
 │   └── normalizer.py     # Construcción de Bundles Transaction deterministas
 ├── hsb/                  # Health Service Bus (Middleware en FastAPI)
-│   ├── main.py           # API REST, router de sedes, interfaz web y observabilidad
+│   ├── main.py           # API REST, router de sedes, observabilidad e interfaz web
 │   ├── parser.py         # Parsers HL7 v2 y CSV con validación de contratos
 │   ├── auth.py           # Gestión de JWT HMAC-SHA256 y matriz RBAC
 │   ├── audit.py          # Ledger de auditoría con encadenamiento SHA-256
-│   └── Dockerfile        # Definición del contenedor del HSB
+│   ├── database.py       # Capa de persistencia distribuida federada (3 sedes)
+│   └── Dockerfile        # Definición multicapa del contenedor del HSB
 ├── tests/                # Fixtures oficiales de prueba y suites de testing
 │   ├── 01_adt_a01_valido_sede2.hl7
 │   ├── 02_oru_r01_laboratorio_sede1.hl7
 │   ├── 03_adt_a01_invalido.hl7
 │   ├── 04_sede3_legado.csv
-│   ├── test_normalizer.py
-│   ├── test_parser_contracts.py
-│   └── test_hsb_integration.py
+│   ├── test_auth.py            # Pruebas de seguridad JWT, RBAC y hashing
+│   ├── test_normalizer.py      # Pruebas de normalización FHIR R4
+│   ├── test_parser_contracts.py# Pruebas de validación sintáctica/semántica
+│   └── test_hsb_integration.py # Pruebas de integración, DLQ y resiliencia
+├── .env.example          # Plantilla de variables de entorno seguras
+├── requirements.txt      # Dependencias Python del proyecto
 └── docker-compose.yml    # Orquestación multicontenedor de la red distribuida
 ```

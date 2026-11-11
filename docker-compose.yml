@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Sede 1 - Sincelejo (Laboratorio Clínico)
   pg_sede1:
