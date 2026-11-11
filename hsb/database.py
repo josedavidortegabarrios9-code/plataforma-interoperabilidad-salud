@@ -366,7 +366,7 @@ def check_mensaje_bus(id_mensaje: str, hash_contenido: str) -> Optional[Dict[str
                 cur.execute("""
                     SELECT id_mensaje, estado, id_sede_origen, fecha_ingreso
                     FROM mensaje_bus
-                    WHERE id_mensaje = %s OR hash_contenido = %s
+                    WHERE (id_mensaje = %s OR hash_contenido = %s) AND estado NOT IN ('MUERTO_DLQ', 'fallido')
                     LIMIT 1
                 """, (id_mensaje, hash_contenido))
                 row = cur.fetchone()

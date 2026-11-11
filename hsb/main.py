@@ -396,7 +396,9 @@ async def ingest_hl7(
     payload_hash = hashlib.sha256(raw_body.encode("utf-8")).hexdigest()
 
     msg_previo_db = check_mensaje_bus(msg_id, payload_hash)
-    if msg_previo_db or msg_id in processed_messages or payload_hash in processed_messages:
+    prev_in_mem = processed_messages.get(msg_id) or processed_messages.get(payload_hash)
+    is_delivered_mem = prev_in_mem and (isinstance(prev_in_mem, dict) and prev_in_mem.get("estado") != "MUERTO_DLQ")
+    if (msg_previo_db and msg_previo_db.get("estado") != "MUERTO_DLQ") or is_delivered_mem:
         performance_metrics["duplicados"] += 1
         audit_ledger.add_event("HSB_IDEMPOTENCY", auth_user.get("rol", "SISTEMA"), "REINTENTO_HL7", f"MSG_{msg_id}", "DUPLICADO")
         return {

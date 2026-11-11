@@ -33,13 +33,27 @@ class FHIRNormalizer:
         if isinstance(dt_val, datetime):
             return dt_val.strftime("%Y-%m-%dT%H:%M:%S-05:00")
         dt_str = str(dt_val).strip()
-        if len(dt_str) == 14 and dt_str.isdigit():  # YYYYMMDDHHMMSS
+        # Formato HL7 14 digitos: YYYYMMDDHHMMSS
+        if len(dt_str) == 14 and dt_str.isdigit():
             return f"{dt_str[0:4]}-{dt_str[4:6]}-{dt_str[6:8]}T{dt_str[8:10]}:{dt_str[10:12]}:{dt_str[12:14]}-05:00"
+        # Formato HL7 12 digitos: YYYYMMDDHHMM
+        if len(dt_str) == 12 and dt_str.isdigit():
+            return f"{dt_str[0:4]}-{dt_str[4:6]}-{dt_str[6:8]}T{dt_str[8:10]}:{dt_str[10:12]}:00-05:00"
+        # Formato HL7 8 digitos: YYYYMMDD
+        if len(dt_str) == 8 and dt_str.isdigit():
+            return f"{dt_str[0:4]}-{dt_str[4:6]}-{dt_str[6:8]}T00:00:00-05:00"
         if "T" in dt_str:
             if not dt_str.endswith("-05:00") and not dt_str.endswith("Z"):
                 return f"{dt_str}:00-05:00" if len(dt_str) == 16 else f"{dt_str}-05:00"
             return dt_str
-        return f"{dt_str}T00:00:00-05:00"
+        if " " in dt_str:
+            parts = dt_str.split(" ")
+            d_part = parts[0]
+            t_part = parts[1] if len(parts) > 1 else "00:00:00"
+            if len(t_part) == 5:
+                t_part += ":00"
+            return f"{d_part}T{t_part}-05:00"
+        return f"{dt_str[:10]}T00:00:00-05:00"
 
     @staticmethod
     def _map_gender(sexo: Optional[str]) -> str:
