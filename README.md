@@ -57,6 +57,10 @@ La red asistencial opera de forma distribuida en tres sedes con sistemas indepen
 - **Docker** y **Docker Compose** instalados y en ejecución.
 - **Git** instalado.
 
+> [!NOTE]
+> **¿Necesitas instalar o iniciar Python en tu máquina host?**
+> **NO.** Todo el middleware (FastAPI, Uvicorn, parsers HL7, normalizador FHIR R4, ledger de auditoría) se compila y ejecuta **automáticamente dentro de Docker**. Al clonar y ejecutar `docker compose up --build -d`, el contenedor `hsb_service` inicializa el runtime de Python y todos los servicios sin requerir configuración previa en tu sistema operativo.
+
 ---
 
 ### Paso 1: Clonar el Repositorio
@@ -377,13 +381,28 @@ curl -s http://localhost:8000/audit/verify | jq .
 
 ## 🧪 9. Ejecución de la Suite de Pruebas Automatizadas
 
-La plataforma cuenta con **30 pruebas automáticas exhaustivas** divididas en pruebas sintácticas, semánticas, normalización FHIR R4, seguridad RBAC/2FA e integración del HSB:
+La plataforma cuenta con **30 pruebas automáticas exhaustivas** divididas en pruebas sintácticas, semánticas, normalización FHIR R4, seguridad RBAC/2FA e integración del HSB. Puedes ejecutarlas de dos formas:
 
+### Opción A (Recomendada — Directamente en el contenedor Docker, sin instalar Python en tu máquina):
 ```bash
-# Asegurarse de activar el entorno virtual
+docker exec -it hsb_service python -m unittest discover -s tests -v
+```
+*(No requiere crear entornos virtuales ni instalar dependencias en el host; utiliza el entorno preconfigurado dentro del contenedor `hsb_service`)*.
+
+---
+
+### Opción B (Desde el entorno virtual local de Ubuntu / Host):
+```bash
+# 1. Crear entorno virtual si aún no existe
+python3 -m venv venv
+
+# 2. Activar el entorno virtual
 source venv/bin/activate
 
-# Ejecutar los 30 tests unitarios y de integración
+# 3. Instalar dependencias
+pip install -r requirements.txt
+
+# 4. Ejecutar la suite completa de 30 tests
 python -m unittest discover -s tests -v
 ```
 
